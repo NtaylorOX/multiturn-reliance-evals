@@ -119,8 +119,10 @@ def main() -> None:
     ap.add_argument("log_dir")
     ap.add_argument("--cells-per-model", type=int, default=16)
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--validation-dir", default="validation", help="folder with the label sheet, labels and tuning runs")
     args = ap.parse_args()
-    uvicorn.run(create_app(args.log_dir, args.cells_per_model), host="127.0.0.1", port=args.port, log_level="warning")
+    uvicorn.run(create_app(args.log_dir, args.cells_per_model, args.validation_dir), host="127.0.0.1",
+                port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":

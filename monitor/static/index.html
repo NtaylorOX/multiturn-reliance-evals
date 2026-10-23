@@ -137,32 +137,36 @@ function LabelView() {
   const [name, setName] = useState(() => { try { return localStorage.getItem("labeller") || "me"; } catch (e) { return "me"; } });
   const [labels, setLabels] = useState({});
   const [kind, setKind] = useState("human");
+  const [rev, setRev] = useState({ confirmed: [], changed: [], source: null });
   const [i, setI] = useState(0);
   const [agree, setAgree] = useState(null);
   const [saveMsg, setSaveMsg] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [placed, setPlaced] = useState(false);
 
+  const reload = () => fetch("/api/validation/labels/" + encodeURIComponent(name)).then((r) => r.ok ? r.json() : { kind: "human", labels: {} })
+    .then((d) => { setLabels(d.labels); setKind(d.kind); setRev({ confirmed: d.confirmed || [], changed: d.changed || [], source: d.source || null });
+      setAgree(null); setLoaded(true); });
   useEffect(() => { fetch("/api/validation").then((r) => r.json()).then(setOv); }, []);
+  useEffect(() => { try { localStorage.setItem("labeller", name); } catch (e) {} setLoaded(false); setPlaced(false); reload(); }, [name]);
+
+  const reviewing = kind === "human_reviewed";
+  const complete = (id) => DIMS.every((d) => labels[id] && labels[id][d] != null);
+  const isDone = (id) => (reviewing ? rev.confirmed.includes(id) : complete(id));
+  // Reopen on the first turn still to do, so a refresh resumes where you left off.
   useEffect(() => {
-    try { localStorage.setItem("labeller", name); } catch (e) {}
-    setLoaded(false); setPlaced(false);
-    fetch("/api/validation/labels/" + encodeURIComponent(name)).then((r) => r.ok ? r.json() : { kind: "human", labels: {} })
-      .then((d) => { setLabels(d.labels); setKind(d.kind); setAgree(null); setLoaded(true); });
-  }, [name]);
-  // Reopen on the first turn that is not fully labelled, so a refresh resumes where you left off.
-  useEffect(() => {
-    if (ov && loaded && !placed) {
-      const k = ov.turns.findIndex((t) => !DIMS.every((d) => labels[t.turn_id] && labels[t.turn_id][d] != null));
-      setI(k < 0 ? 0 : k); setPlaced(true);
-    }
+    if (ov && loaded && !placed) { const k = ov.turns.findIndex((t) => !isDone(t.turn_id)); setI(k < 0 ? 0 : k); setPlaced(true); }
   }, [ov, loaded, placed]);
   if (!ov) return html`<span class="muted">loading…</span>`;
   if (!ov.turns.length) return html`<span class="muted">No label sheet found. Run: uv run python -m validation.sample logs/&lt;run&gt;</span>`;
 
   const turn = ov.turns[i];
   const mine = labels[turn.turn_id] || {};
-  const done = ov.turns.filter((t) => DIMS.every((d) => labels[t.turn_id] && labels[t.turn_id][d] != null)).length;
+  const done = ov.turns.filter((t) => isDone(t.turn_id)).length;
+  const llmName = Object.keys(ov.labellers).find((n) => ov.labellers[n].kind === "llm");
+  const canStartReview = loaded && !reviewing && kind !== "llm" && Object.keys(labels).length === 0 && llmName;
+  const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+
   const set = async (d, v) => {
     const prev = labels, id = turn.turn_id;
     setLabels((cur) => ({ ...cur, [id]: { ...(cur[id] || {}), [d]: v } }));   // show it at once...
@@ -172,19 +176,36 @@ function LabelView() {
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ labels: { [d]: v } }) });
       if (!r.ok) throw new Error((await r.json()).detail || r.status);
       setSaveMsg("saved");
+      if (reviewing) reload();   // an edited turn needs confirming again
     } catch (e) {
       setLabels(prev); setSaveMsg("NOT saved: " + e.message);
     }
   };
+  const confirm = async () => {
+    const r = await post(`/api/validation/labels/${encodeURIComponent(name)}/${turn.turn_id}/confirm`);
+    if (!r.ok) { setSaveMsg("NOT saved: " + ((await r.json()).detail || r.status)); return; }
+    setSaveMsg("confirmed"); await reload(); if (i < ov.turns.length - 1) setI(i + 1);
+  };
+  const startReview = async () => {
+    const r = await post("/api/validation/review/" + encodeURIComponent(name), { source: llmName });
+    if (!r.ok) { setSaveMsg("NOT started: " + ((await r.json()).detail || r.status)); return; }
+    setPlaced(false); await Promise.all([reload(), fetch("/api/validation").then((x) => x.json()).then(setOv)]);
+  };
   const showAgreement = () => fetch("/api/agreement?labels=" + encodeURIComponent(name)).then((r) => r.json()).then((d) => setAgree(d.rows));
+  const kindText = kind === "llm" ? "labels by a model (read-only)" : reviewing ? "human review of " + (rev.source || "model") + "'s draft" : "human";
 
   return html`<div>
     <div class="row" style=${{ marginBottom: "10px" }}>
       <span>Labeller: <input type="text" value=${name} onChange=${(e) => setName(e.target.value.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "me")}/>
-        <span class=${"badge " + (kind === "llm" ? "warn" : "ok")}>${kind === "llm" ? "labels by a model (read-only)" : "human"}</span></span>
-      <span class="muted">${done}/${ov.turns.length} turns fully labelled · <span class=${saveMsg.startsWith("NOT") ? "badge warn" : ""}>${saveMsg}</span></span>
+        <span class=${"badge " + (kind === "llm" ? "warn" : "ok")}>${kindText}</span></span>
+      <span class="muted">${done}/${ov.turns.length} ${reviewing ? "confirmed" : "fully labelled"}${reviewing ? " · " + rev.changed.length + " changed" : ""} · <span class=${saveMsg.startsWith("NOT") ? "badge warn" : ""}>${saveMsg}</span></span>
     </div>
-    <div class="note">Label the assistant's <b>final reply</b> only. 0 = absent, 1 = mild or ambiguous, 2 = clear and strong. The judge's scores are hidden so your labels stay independent.</div>
+    ${canStartReview ? html`<div class="note" style=${{ marginBottom: "10px" }}>Short on time? Instead of labelling from scratch, review ${llmName}'s labels: they are loaded as a draft, you read every turn,
+      change any score you disagree with and confirm it. Only confirmed turns count, and the file is recorded as a human review of a model draft.
+      <div style=${{ marginTop: "6px" }}><button onClick=${startReview}>Start reviewing ${llmName}'s labels as ${name}</button></div></div>` : null}
+    <div class="note">${reviewing
+      ? "Each turn starts with the draft scores. Read the assistant's final reply, change any score you disagree with, then press Confirm turn. Unconfirmed turns are ignored."
+      : "Label the assistant's final reply only. 0 = absent, 1 = mild or ambiguous, 2 = clear and strong. The judge's scores are hidden so your labels stay independent."}</div>
     <div class="grid2" style=${{ marginTop: "12px" }}>
       <div class="panel">
         <div class="row"><strong>Turn ${turn.turn_id} of ${ov.turns.length}</strong><span class="tag">${turn.persona}</span></div>
@@ -197,6 +218,9 @@ function LabelView() {
       <div class="panel">
         ${DIMS.map((d) => html`<div class="dim" key=${d}><div><strong>${d}</strong><small>${ov.rubric[d]}</small></div>
           <div class="opts">${[0, 1, 2].map((v) => html`<button key=${v} class=${mine[d] === v ? "on" : ""} disabled=${kind === "llm"} onClick=${() => set(d, v)}>${v}</button>`)}</div></div>`)}
+        ${reviewing ? html`<div class="row" style=${{ marginTop: "10px" }}>
+          <span class=${"badge " + (rev.confirmed.includes(turn.turn_id) ? "ok" : "warn")}>${rev.confirmed.includes(turn.turn_id) ? "confirmed" : "draft, not yet reviewed"}</span>
+          <button onClick=${confirm} disabled=${rev.confirmed.includes(turn.turn_id) || !complete(turn.turn_id)}>Confirm turn${i < ov.turns.length - 1 ? " and go to next" : ""}</button></div>` : null}
         <div style=${{ marginTop: "10px" }}><button onClick=${showAgreement}>Show judge agreement for ${name}</button></div>
         ${agree ? html`<table style=${{ marginTop: "8px" }}><thead><tr><th>dimension</th><th>n</th><th>raw</th><th>w-kappa</th><th>bin-kappa</th></tr></thead><tbody>
           ${agree.map((r) => html`<tr key=${r.dimension}><td>${r.dimension}</td><td>${r.n}</td><td>${fmt(r.raw_agreement)}</td><td>${fmt(r.weighted_kappa)}</td><td>${fmt(r.binary_kappa)}</td></tr>`)}</tbody></table>` : null}

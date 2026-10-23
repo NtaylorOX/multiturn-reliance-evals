@@ -3,6 +3,8 @@
     GET  /api/validation                         the blind turns to label, and which label files exist
     GET  /api/validation/labels/{name}           one labeller's labels
     PUT  /api/validation/labels/{name}/{turn}    set the five 0/1/2 labels for a turn (human labellers only)
+    POST /api/validation/review/{name}           start reviewing a model's labels as an unconfirmed draft
+    POST /api/validation/labels/{name}/{turn}/confirm   mark a draft turn as reviewed
     GET  /api/agreement?labels={name}            judge-vs-labeller agreement per dimension
     GET  /api/tuning                             every tuning run, newest first
     POST /api/tuning/start                       start `validation.tune` in the background (one at a time)
@@ -24,7 +26,7 @@ from pydantic import BaseModel
 from evals.rubric import RUBRIC
 from observability.tracing import DIMENSIONS
 from validation.kappa import agreement, load_pairs
-from validation.labels import load_labels, save_labels
+from validation.labels import load_labels, read_file, review_summary, save_labels, start_review
 
 _NAME = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
@@ -40,6 +42,18 @@ class TuneBody(BaseModel):
 
     labels: str = "claude"
     rounds: int = 4
+
+
+class ReviewBody(BaseModel):
+    """Which model-written label file to take as the draft to review."""
+
+    source: str = "claude"
+
+
+def _store(path: Path, data: dict, name: str) -> None:
+    """Write a labels file back, keeping its kind and any review fields (`source`, `draft`, `confirmed`)."""
+    extra = {k: v for k, v in data.items() if k not in ("labeller", "kind", "labels")}
+    save_labels(path, data["labels"], labeller=name, kind=data["kind"], extra=extra)
 
 
 def _check_name(name: str) -> str:
@@ -68,17 +82,53 @@ def build_router(validation_dir: str | Path) -> APIRouter:
                           "user": r["user_message"], "assistant": r["assistant_reply"]} for r in csv.DictReader(f)]
         labellers = {}
         for p in sorted((root / "labels").glob("*.json")):  # `*.log.jsonl` audit files do not match this pattern
-            raw = json.loads(p.read_text(encoding="utf-8"))
-            labellers[p.stem] = {"kind": raw.get("kind", "human"), "count": len(load_labels(p))}
+            labellers[p.stem] = {"kind": read_file(p)["kind"], "count": len(load_labels(p))}
         return {"turns": turns, "labellers": labellers, "dimensions": list(DIMENSIONS), "rubric": RUBRIC}
 
     @router.get("/api/validation/labels/{name}")
     def get_labels(name: str):
+        """A labeller's labels and kind. For a review file this also lists confirmed and changed turns."""
         p = labels_path(name)
         if not p.exists():
             return {"kind": "human", "labels": {}}
-        raw = json.loads(p.read_text(encoding="utf-8"))
-        return {"kind": raw.get("kind", "human"), "labels": raw["labels"]}
+        data = read_file(p)
+        out = {"kind": data["kind"], "labels": data["labels"]}
+        if data["kind"] == "human_reviewed":
+            out.update(review_summary(p))
+        return out
+
+    @router.post("/api/validation/review/{name}")
+    def begin_review(name: str, body: ReviewBody):
+        """Start reviewing a model's labels: copy them into `name` as an unconfirmed draft."""
+        dest, src = labels_path(name), labels_path(body.source)
+        if dest.exists():
+            raise HTTPException(409, "that labeller already has a label file")
+        if not src.exists():
+            raise HTTPException(404, "no such source labels")
+        with lock:
+            try:
+                start_review(src, dest, name)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        return {"ok": True}
+
+    @router.post("/api/validation/labels/{name}/{turn_id}/confirm")
+    def confirm_turn(name: str, turn_id: str):
+        """Mark one draft turn as reviewed. Needs all five labels set."""
+        p = labels_path(name)
+        if not p.exists() or turn_id not in sheet_turn_ids():
+            raise HTTPException(404, "no such labeller or turn")
+        with lock:
+            data = read_file(p)
+            if data["kind"] != "human_reviewed":
+                raise HTTPException(400, "only review files have turns to confirm")
+            if set(data["labels"].get(turn_id, {})) != set(DIMENSIONS):
+                raise HTTPException(400, "the turn needs all five labels before it can be confirmed")
+            data.setdefault("confirmed", {})[turn_id] = True
+            _store(p, data, name)
+            with p.with_suffix(".log.jsonl").open("a", encoding="utf-8") as log:
+                log.write(json.dumps({"ts": time.time(), "turn": turn_id, "confirmed": True}) + "\n")
+        return {"ok": True}
 
     def sheet_turn_ids() -> set[str]:
         sheet = root / "label_sheet.csv"
@@ -100,11 +150,13 @@ def build_router(validation_dir: str | Path) -> APIRouter:
         if not body.labels or set(body.labels) - set(DIMENSIONS) or any(v not in (0, 1, 2) for v in body.labels.values()):
             raise HTTPException(400, "labels must use the five rubric dimensions with values 0, 1 or 2")
         with lock:
-            existing = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"kind": "human", "labels": {}}
-            if existing.get("kind") == "llm":
+            existing = read_file(p) if p.exists() else {"kind": "human", "labels": {}}
+            if existing["kind"] == "llm":
                 raise HTTPException(403, "that label file was written by a model and is read-only here")
             existing["labels"].setdefault(turn_id, {}).update(body.labels)
-            save_labels(p, existing["labels"], labeller=name, kind="human")
+            if existing["kind"] == "human_reviewed":
+                existing.setdefault("confirmed", {})[turn_id] = False  # an edited turn must be confirmed again
+            _store(p, existing, name)
             with p.with_suffix(".log.jsonl").open("a", encoding="utf-8") as log:
                 log.write(json.dumps({"ts": time.time(), "turn": turn_id, "set": body.labels}) + "\n")
         return {"ok": True}

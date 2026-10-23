@@ -178,6 +178,13 @@ Open the monitor's **Label** tab, enter a name and score each turn 0/1/2 on the 
 are hidden). Labels are saved after every click to `validation/labels/<name>.json`, validated, written atomically and
 logged. Reload and it resumes at the first unlabelled turn.
 
+Labelling 30 turns from scratch is slow, so the tab also offers a **review mode**: it loads another labeller's
+model-written labels as an unconfirmed *draft*. You read each turn, change any score you disagree with and press
+Confirm. Only confirmed turns count, an edit withdraws a turn's confirmation, and the file is recorded as
+`kind: "human_reviewed"` with the untouched draft stored beside it, so the number of turns a person changed is always
+recoverable. Reviewed labels are anchored on the draft, so agreement with them is not as independent as labels made from
+scratch, and a report should say which kind it used.
+
 **2. Measure agreement.**
 
 ```bash
