@@ -1,6 +1,6 @@
-"""Agreement between the LLM judge and a human labeller.
+"""Agreement between the LLM judge and a labeller (a human, or a reference model).
 
-    uv run python -m validation.kappa validation/label_sheet.csv validation/label_key.csv
+    uv run python -m validation.kappa validation/labels/claude.json validation/label_key.csv
 
 Reports Cohen's kappa for each rubric dimension in two forms:
 
@@ -21,6 +21,7 @@ from pathlib import Path
 from sklearn.metrics import cohen_kappa_score
 
 from observability.tracing import DIMENSIONS
+from validation.labels import labeller_kind, load_labels
 
 
 def kappa(a: list[int], b: list[int], weights: str | None = None) -> float:
@@ -32,26 +33,25 @@ def kappa(a: list[int], b: list[int], weights: str | None = None) -> float:
         return float(cohen_kappa_score(a, b, weights=weights))
 
 
-def load_pairs(sheet_path: str | Path, key_path: str | Path) -> dict[str, tuple[list[int], list[int]]]:
-    """Join the human sheet to the judge's scores. Returns dimension -> (human labels, judge labels), both 0..2.
-
-    Rows the human has not labelled yet are skipped, so partial progress can be scored.
-    """
+def judge_scores(key_path: str | Path) -> dict[str, dict[str, int]]:
+    """The judge's scores from `label_key.csv` as `turn_id -> {dimension: 0|1|2}`."""
     with open(key_path, newline="", encoding="utf-8") as f:
-        key = {row["turn_id"]: row for row in csv.DictReader(f)}
-    pairs: dict[str, tuple[list[int], list[int]]] = {d: ([], []) for d in DIMENSIONS}
-    with open(sheet_path, newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            if any(row[d].strip() == "" for d in DIMENSIONS):
-                continue
-            judged = key[row["turn_id"]]
-            for d in DIMENSIONS:
-                human = int(row[d])
-                if human not in (0, 1, 2):
-                    raise ValueError(f"turn {row['turn_id']}, {d}: label must be 0, 1 or 2, got {human}")
-                pairs[d][0].append(human)
-                pairs[d][1].append(round(float(judged[f"judge_{d}"]) * 2))
-    return pairs
+        return {row["turn_id"]: {d: round(float(row[f"judge_{d}"]) * 2) for d in DIMENSIONS}
+                for row in csv.DictReader(f)}
+
+
+def pairs_from(labels: dict[str, dict[str, int]], judge: dict[str, dict[str, int]]) -> dict[str, tuple[list[int], list[int]]]:
+    """Line labels up with judge scores. Returns dimension -> (labeller values, judge values) over shared turns."""
+    shared = sorted(set(labels) & set(judge), key=int)
+    return {d: ([labels[t][d] for t in shared], [judge[t][d] for t in shared]) for d in DIMENSIONS}
+
+
+def load_pairs(labels_path: str | Path, key_path: str | Path) -> dict[str, tuple[list[int], list[int]]]:
+    """Join a labels file (JSON, or a filled-in sheet CSV) to the judge's scores.
+
+    Turns the labeller has not fully labelled yet are skipped, so partial progress can be scored.
+    """
+    return pairs_from(load_labels(labels_path), judge_scores(key_path))
 
 
 def agreement(pairs: dict[str, tuple[list[int], list[int]]]) -> list[dict]:
@@ -71,11 +71,12 @@ def agreement(pairs: dict[str, tuple[list[int], list[int]]]) -> list[dict]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("sheet")
+    ap.add_argument("labels", help="labels JSON, or a filled-in label_sheet.csv")
     ap.add_argument("key")
     ap.add_argument("--out", default=None, help="optional CSV path for the summary")
     args = ap.parse_args()
-    rows = agreement(load_pairs(args.sheet, args.key))
+    rows = agreement(load_pairs(args.labels, args.key))
+    print(f"labeller kind: {labeller_kind(args.labels)}")
     print(f"{'dimension':<30}{'n':>4}{'raw':>8}{'w-kappa':>10}{'bin-kappa':>11}")
     for r in rows:
         print(f"{r['dimension']:<30}{r['n']:>4}{r['raw_agreement']:>8}{r['weighted_kappa']:>10}{r['binary_kappa']:>11}")

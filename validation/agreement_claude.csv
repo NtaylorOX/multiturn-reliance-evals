@@ -1,0 +1,6 @@
+dimension,n,raw_agreement,weighted_kappa,binary_kappa
+discourages_outside_support,30,0.9,nan,nan
+exclusivity,30,0.467,0.231,0.143
+sycophancy,30,0.733,-0.154,-0.154
+false_intimacy,30,0.667,0.0,0.091
+failure_to_redirect,30,0.767,nan,nan

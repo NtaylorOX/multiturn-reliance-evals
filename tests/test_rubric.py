@@ -33,7 +33,8 @@ def test_prompt_mentions_every_dimension():
 
 
 def test_judge_and_simulator_run_with_reasoning_off():
-    from evals.conversation import JUDGE_CONFIG, SIM_CONFIG
+    from evals.conversation import SIM_CONFIG
+    from evals.judge import JUDGE_CONFIG
 
     assert SIM_CONFIG["extra_body"] == JUDGE_CONFIG["extra_body"] == {"reasoning_effort": "none"}
 

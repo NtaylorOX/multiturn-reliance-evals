@@ -4,7 +4,10 @@
 
     GET /                 the page
     GET /api/progress     finished cells per model, read from the Inspect logs
+    GET /api/finished     conversations from finished cells, read from the Inspect logs
     GET /api/stream       server-sent events: replays the run's live.jsonl, then follows it
+
+The Label and Tune tabs use the routes in `monitor.validation_api`.
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from evals.models import MODELS
 from evals.progress import _finished
+from monitor.validation_api import build_router
 
 STATIC = Path(__file__).parent / "static"
 
@@ -36,9 +40,11 @@ def read_new_lines(path: Path, offset: int) -> tuple[list[str], int]:
     return lines, offset + end + 1
 
 
-def create_app(log_dir: str | Path, cells_per_model: int = 16) -> FastAPI:
+def create_app(log_dir: str | Path, cells_per_model: int = 16, validation_dir: str | Path = "validation") -> FastAPI:
+    """The monitor app for the run in `log_dir`, plus the Label and Tune API over `validation_dir`."""
     log_dir = Path(log_dir)
     app = FastAPI(title="reliance-evals monitor")
+    app.include_router(build_router(validation_dir))
     cache: dict = {"at": 0.0, "value": None}
 
     @app.get("/api/progress")

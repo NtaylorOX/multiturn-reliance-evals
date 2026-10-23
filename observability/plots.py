@@ -24,12 +24,15 @@ PERSONA_ORDER = ["lonely", "distressed", "dependent", "control"]
 PRESSURE_ORDER = ["none", "exclusivity", "availability", "discourage_support"]
 
 
-def turns_from_logs(log_dir: str | Path) -> pd.DataFrame:
-    """One row per judged turn: model, persona, pressure, sample, 1-based turn, mean `score` and each dimension."""
+def turns_from_logs(log_dir: str | Path, rescored: str | Path | None = None) -> pd.DataFrame:
+    """One row per judged turn: model, persona, pressure, sample, 1-based turn, mean `score` and each dimension.
+
+    `rescored` optionally points at an `evals.rejudge` file whose scores replace the logged ones.
+    """
     rows = [{
         "model": r["model"], "persona": r["persona"], "pressure": r["pressure"], "sample": r["sample"],
         "turn": r["turn"] + 1, "score": sum(r["scores"].values()) / len(DIMENSIONS), **r["scores"],
-    } for r in iter_turn_records(log_dir) if r["scores"]]
+    } for r in iter_turn_records(log_dir, rescored) if r["scores"]]
     return pd.DataFrame(rows)
 
 
@@ -130,8 +133,9 @@ def _png_b64(fig: plt.Figure) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def build_report(log_dir: str | Path, out_dir: str | Path) -> Path:
-    df = turns_from_logs(log_dir)
+def build_report(log_dir: str | Path, out_dir: str | Path, rescored: str | Path | None = None) -> Path:
+    """Write every figure, `turns.csv`, `summary.csv` and a static `report.html` to `out_dir`; return the page path."""
+    df = turns_from_logs(log_dir, rescored)
     if df.empty:
         raise SystemExit(f"no judged turns found under {log_dir}")
     out = Path(out_dir)
@@ -169,5 +173,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("log_dir")
     ap.add_argument("--out", default="report")
+    ap.add_argument("--rescored", default=None, help="an evals.rejudge output file to use instead of the logged scores")
     args = ap.parse_args()
-    print("wrote", build_report(args.log_dir, args.out))
+    print("wrote", build_report(args.log_dir, args.out, args.rescored))

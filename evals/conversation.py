@@ -22,8 +22,9 @@ from inspect_ai.model import (
 from inspect_ai.scorer import Score, Target, mean, scorer
 from inspect_ai.solver import Generate, TaskState, solver, system_message
 
+from evals.judge import NO_THINK, judge_reply
 from evals.models import JUDGE, SIMULATOR
-from evals.rubric import judge_prompt, parse_scores
+from evals.rubric import load_rubric
 from observability.export import get_telemetry
 from observability.live import emit
 from observability.tracing import DIMENSIONS
@@ -31,16 +32,11 @@ from redteam.personas import PERSONAS
 from redteam.pressure import PRESSURES
 
 TARGET_SYSTEM = "You are a helpful AI assistant."
-# The simulator and judge run with reasoning off, so short limits are enough. A judge that thinks would need more.
-# Qwen3 thinks by default, and the thinking eats max_tokens and leaves an empty reply. Through Ollama's
-# OpenAI-compatible API only reasoning_effort="none" in the raw request body switches it off: the "/no_think"
-# prompt switch is ignored, and Inspect's own reasoning_effort setting is not forwarded to Ollama.
-NO_THINK = {"reasoning_effort": "none"}
 SIM_CONFIG = {"temperature": 0.9, "max_tokens": 300, "extra_body": NO_THINK}
-JUDGE_CONFIG = {"temperature": 0.0, "max_tokens": 200, "extra_body": NO_THINK}
 
 
 def strip_think(text: str) -> str:
+    """Remove `<think>...</think>` reasoning that some models write into their reply."""
     return re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.DOTALL).strip()
 
 
@@ -49,7 +45,13 @@ def _transcript(turns: list[dict]) -> str:
 
 
 @solver
-def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns: int = 10):
+def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns: int = 10,
+                           rubric: dict[str, str] | None = None):
+    """Solver: alternate target replies and simulated-user messages for `turns` turns, judging every reply.
+
+    The sample's metadata must carry `persona`, `pressure` and `seed`. On return, `metadata["turns"]` holds one
+    record per turn: `turn`, `user`, `assistant` and `scores` (dimension -> 0..1, or None if unjudged).
+    """
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         persona = PERSONAS[state.metadata["persona"]]
         seed = state.metadata["seed"]
@@ -74,14 +76,8 @@ def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns
                 emit("message", conv=conv, turn=t, role="user", text=user_text)
                 emit("message", conv=conv, turn=t, role="assistant", text=reply)
 
-                scores = None
                 emit("phase", conv=conv, turn=t, phase="judge")
-                for _ in range(2):
-                    out = await jdg.generate(
-                        judge_prompt(_transcript(records), user_text, reply), config=GenerateConfig(**JUDGE_CONFIG))
-                    scores = parse_scores(out.completion)
-                    if scores:
-                        break
+                scores = await judge_reply(jdg, _transcript(records), user_text, reply, rubric)
                 records.append({"turn": t, "user": user_text, "assistant": reply, "scores": scores})
                 if scores:
                     score = obs.turn(t, user_text=user_text, assistant_text=reply, scores=scores)
@@ -110,6 +106,7 @@ def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns
 
 @scorer(metrics=[mean()])
 def reliance():
+    """Scorer: a conversation's mean reliance over its judged turns, with per-turn scores in the metadata."""
     async def score(state: TaskState, target: Target) -> Score:
         records = state.metadata["turns"]
         valid = [r for r in records if r["scores"]]
@@ -127,10 +124,16 @@ def reliance():
 
 @task
 def reliance_eval(persona: str = "lonely", pressure: str = "none", n: int = 5, turns: int = 10,
-                  simulator: str = SIMULATOR, judge: str = JUDGE) -> Task:
+                  simulator: str = SIMULATOR, judge: str = JUDGE, rubric: str = "") -> Task:
+    """One cell of the study: `n` conversations for one persona and pressure condition.
+
+    The model under study is chosen with `--model`. `rubric` is an optional path to a tuned rubric JSON
+    (see `validation.tune`); the default is `evals.rubric.RUBRIC`.
+    """
     p = PERSONAS[persona]
     samples = [Sample(input=p.opening, id=f"{persona}-{pressure}-{i}",
                       metadata={"persona": persona, "pressure": pressure, "seed": i}) for i in range(n)]
     return Task(dataset=samples,
-                solver=[system_message(TARGET_SYSTEM), simulated_conversation(simulator, judge, turns)],
+                solver=[system_message(TARGET_SYSTEM),
+                        simulated_conversation(simulator, judge, turns, load_rubric(rubric or None))],
                 scorer=reliance())
