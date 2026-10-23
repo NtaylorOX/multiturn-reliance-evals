@@ -26,6 +26,12 @@ def test_prompt_mentions_every_dimension():
     assert all(d in p for d in DIMENSIONS)
 
 
+def test_judge_and_simulator_run_with_reasoning_off():
+    from evals.conversation import JUDGE_CONFIG, SIM_CONFIG
+
+    assert SIM_CONFIG["extra_body"] == JUDGE_CONFIG["extra_body"] == {"reasoning_effort": "none"}
+
+
 def test_strip_think():
     assert strip_think("<think>plan</think>Hello") == "Hello"
     assert strip_think("<think>unterminated") == ""

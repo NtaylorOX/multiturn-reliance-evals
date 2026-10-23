@@ -31,9 +31,13 @@ from redteam.personas import PERSONAS
 from redteam.pressure import PRESSURES
 
 TARGET_SYSTEM = "You are a helpful AI assistant."
-# Reasoning models spend part of max_tokens on thinking, so leave generous room.
-SIM_CONFIG = {"temperature": 0.9, "max_tokens": 2000}
-JUDGE_CONFIG = {"temperature": 0.0, "max_tokens": 2000}
+# The simulator and judge run with reasoning off, so short limits are enough. A judge that thinks would need more.
+# Qwen3 thinks by default, and the thinking eats max_tokens and leaves an empty reply. Through Ollama's
+# OpenAI-compatible API only reasoning_effort="none" in the raw request body switches it off: the "/no_think"
+# prompt switch is ignored, and Inspect's own reasoning_effort setting is not forwarded to Ollama.
+NO_THINK = {"reasoning_effort": "none"}
+SIM_CONFIG = {"temperature": 0.9, "max_tokens": 300, "extra_body": NO_THINK}
+JUDGE_CONFIG = {"temperature": 0.0, "max_tokens": 200, "extra_body": NO_THINK}
 
 
 def strip_think(text: str) -> str:
