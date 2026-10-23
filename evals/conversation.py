@@ -24,6 +24,7 @@ from inspect_ai.solver import Generate, TaskState, solver, system_message
 
 from evals.models import JUDGE, SIMULATOR
 from evals.rubric import judge_prompt, parse_scores
+from observability.export import get_telemetry
 from observability.tracing import DIMENSIONS
 from redteam.personas import PERSONAS
 from redteam.pressure import PRESSURES
@@ -50,30 +51,36 @@ def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns
         sim_prompt = persona.simulator_prompt + PRESSURES[state.metadata["pressure"]]
         sim, jdg = get_model(simulator), get_model(judge)
         records: list[dict] = []
+        conversation = get_telemetry().conversation(
+            str(state.sample_id), model=str(state.model), persona=state.metadata["persona"],
+            pressure=state.metadata["pressure"], seed=seed)
 
-        for t in range(turns):
-            state = await generate(state)
-            reply = strip_think(state.output.completion)
-            state.messages[-1] = ChatMessageAssistant(content=reply)
-            user_text = state.messages[-2].text
+        with conversation as obs:
+            for t in range(turns):
+                state = await generate(state)
+                reply = strip_think(state.output.completion)
+                state.messages[-1] = ChatMessageAssistant(content=reply)
+                user_text = state.messages[-2].text
 
-            scores = None
-            for _ in range(2):
-                out = await jdg.generate(
-                    judge_prompt(_transcript(records), user_text, reply), config=GenerateConfig(**JUDGE_CONFIG))
-                scores = parse_scores(out.completion)
+                scores = None
+                for _ in range(2):
+                    out = await jdg.generate(
+                        judge_prompt(_transcript(records), user_text, reply), config=GenerateConfig(**JUDGE_CONFIG))
+                    scores = parse_scores(out.completion)
+                    if scores:
+                        break
+                records.append({"turn": t, "user": user_text, "assistant": reply, "scores": scores})
                 if scores:
-                    break
-            records.append({"turn": t, "user": user_text, "assistant": reply, "scores": scores})
+                    obs.turn(t, user_text=user_text, assistant_text=reply, scores=scores)
 
-            if t < turns - 1:
-                # The simulator sees the conversation with roles flipped: its own lines are "assistant".
-                sim_msgs = [ChatMessageSystem(content=sim_prompt)]
-                for r in records:
-                    sim_msgs.append(ChatMessageAssistant(content=r["user"]))
-                    sim_msgs.append(ChatMessageUser(content=r["assistant"]))
-                nxt = await sim.generate(sim_msgs, config=GenerateConfig(seed=seed, **SIM_CONFIG))
-                state.messages.append(ChatMessageUser(content=strip_think(nxt.completion) or "..."))
+                if t < turns - 1:
+                    # The simulator sees the conversation with roles flipped: its own lines are "assistant".
+                    sim_msgs = [ChatMessageSystem(content=sim_prompt)]
+                    for r in records:
+                        sim_msgs.append(ChatMessageAssistant(content=r["user"]))
+                        sim_msgs.append(ChatMessageUser(content=r["assistant"]))
+                    nxt = await sim.generate(sim_msgs, config=GenerateConfig(seed=seed, **SIM_CONFIG))
+                    state.messages.append(ChatMessageUser(content=strip_think(nxt.completion) or "..."))
 
         state.metadata["turns"] = records
         return state
