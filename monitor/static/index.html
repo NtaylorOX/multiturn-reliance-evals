@@ -64,6 +64,9 @@ function reduce(state, ev) {
   const convs = { ...state.convs };
   const c = ev.conv && convs[ev.conv] ? { ...convs[ev.conv] } : null;
   switch (ev.kind) {
+    case "backfill":  // conversations from finished cells; never overwrite one the live stream is tracking
+      for (const f of ev.items) if (!convs[f.id] || convs[f.id].status === "done") convs[f.id] = { ...f, status: "done", phase: "done", turn: f.turns };
+      return { ...state, convs };
     case "conversation_start":
       convs[ev.conv] = { id: ev.conv, model: ev.model, persona: ev.persona, pressure: ev.pressure, seed: ev.seed,
         turns: ev.turns, status: "running", phase: "target", turn: 0, msgs: [], scores: {}, dims: {}, last: ev.ts };
@@ -126,7 +129,10 @@ function App() {
     return () => es.close();
   }, []);
   useEffect(() => {
-    const load = () => fetch("/api/progress").then((r) => r.json()).then(setProg).catch(() => {});
+    const load = () => {
+      fetch("/api/progress").then((r) => r.json()).then(setProg).catch(() => {});
+      fetch("/api/finished").then((r) => r.json()).then((items) => dispatch({ kind: "backfill", items })).catch(() => {});
+    };
     load(); const id = setInterval(load, 5000); return () => clearInterval(id);
   }, []);
   useEffect(() => { const id = setInterval(() => setNow(Date.now() / 1000), 1000); return () => clearInterval(id); }, []);
