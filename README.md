@@ -1,5 +1,11 @@
 # multiturn-reliance-evals
 
+[![CI](https://github.com/NtaylorOX/multiturn-reliance-evals/actions/workflows/ci.yml/badge.svg)](https://github.com/NtaylorOX/multiturn-reliance-evals/actions/workflows/ci.yml)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+![Lint: ruff](https://img.shields.io/badge/lint-ruff-261230)
+![Types: mypy](https://img.shields.io/badge/types-mypy-2a6db2)
+
 **Do language models reinforce unhealthy emotional reliance over a multi-turn conversation with a
 vulnerable user, and does it get worse under light pressure?**
 
@@ -82,18 +88,18 @@ uv run inspect eval evals/conversation.py --model ollama/llama3.1:8b \
     -T persona=lonely -T pressure=availability -T n=5
 
 # the whole grid: models x personas x pressures
-uv run python -m evals.run --models llama31-8b --n 1 --log-dir logs/my-run
+uv run reliance run --models llama31-8b --n 1 --log-dir logs/my-run
 
 # the monitor: live conversations and progress, plus the Label and Tune tabs
-uv run python -m monitor.server logs/my-run        # http://localhost:8765
+uv run reliance monitor logs/my-run        # http://localhost:8765
 
 # plots, CSVs and a static HTML report from the logs
-uv run python -m observability.plots logs/my-run --out report
+uv run reliance plots logs/my-run --out report
 ```
 
 ### The monitor
 
-`uv run python -m monitor.server logs/my-run` serves a local page (a small FastAPI server and one React file, no build
+`uv run reliance monitor logs/my-run` serves a local page (a small FastAPI server and one React file, no build
 step) with three tabs. **Run** shows progress per model and each conversation as it happens, with a transcript view
 that shows the judge's score on every assistant turn. Message text is rendered as markdown, sanitised first because it
 is model output. **Label** is a form for scoring turns without seeing the judge.
@@ -172,7 +178,7 @@ sequenceDiagram
 **1. Draw a blind sample and label it.**
 
 ```bash
-uv run python -m validation.sample logs/my-run --n 30    # label_sheet.csv (blind) + label_key.csv
+uv run reliance sample logs/my-run --n 30    # label_sheet.csv (blind) + label_key.csv
 ```
 
 Open the monitor's **Label** tab, enter a name and score each turn 0/1/2 on the five dimensions (the judge's scores
@@ -189,33 +195,30 @@ scratch, and a report should say which kind it used.
 **2. Measure agreement.**
 
 ```bash
-uv run python -m validation.kappa validation/labels/<name>.json validation/label_key.csv
+uv run reliance kappa validation/labels/<name>.json validation/label_key.csv
 ```
 
 Reports raw agreement, quadratic-weighted Cohen's kappa and a binary (sign present or not) kappa per dimension.
 Kappa is undefined when a rater uses one constant label, which happens for rare dimensions on small samples.
 
-**3. Tune the rubric** (the monitor's **Tune judge** tab, or `uv run python -m validation.tune`). A small reflective
+**3. Tune the rubric** (the monitor's **Tune judge** tab, or `uv run reliance tune`). A small reflective
 optimiser, in the family of [GEPA and DSPy's MIPROv2](https://dropbox.tech/machine-learning/how-we-turned-ai-evaluations-into-better-responses-in-dash-chat)
 and [MLflow's GEPA alignment optimizer](https://mlflow.org/docs/latest/genai/eval-monitor/scorers/llm-judge/gepa/):
 it scores labelled turns, shows the worst disagreements to an optimiser model, asks for rewritten dimension
 definitions, keeps a rewrite only if it agrees better, and finally compares baseline and tuned rubrics on held-out
 turns. Progress is written to `validation/tuning/<id>.json` after every round and shown live in the UI.
 
-**4. Re-score without rerunning.** `uv run python -m evals.rejudge logs/my-run --rubric validation/rubrics/tuned.json --out rescored.jsonl`,
+**4. Re-score without rerunning.** `uv run reliance rejudge logs/my-run --rubric validation/rubrics/tuned.json --out rescored.jsonl`,
 then pass `--rescored rescored.jsonl` to the plots. Conversations are untouched; only the scores change.
 
 ### What the pilot's validation found
 
-How the 30 labels were made, stated plainly: Claude first labelled the turns blind to the judge's scores
-(`validation/labels/claude.json`, `kind: "llm"`). The author then reviewed all 30 in the Label tab's review mode and
-confirmed every one, **changing none** (`validation/labels/me.json`, `kind: "human_reviewed"`, with the untouched draft and
-a per-click audit log beside it). So the labels are a human-confirmed model draft, not independent human labels, and the
-agreement figures below are effectively agreement with Claude's labels. Independent from-scratch labels, ideally from
-more than one person, would be the stronger validation and are the obvious next step. Tuning a judge towards a model's
-labels also only makes it resemble that model, a circularity
-[practitioners warn about](https://tianpan.co/blog/2026-05-02-llm-as-validator-antipattern-circular-quality-gates).
-The tuning run below used the draft labels, which are identical to the confirmed ones.
+**Labels used.** The 30 turns were first labelled by Claude, blind to the judge's scores (`labels/claude.json`), then
+reviewed and confirmed turn by turn by the author, who changed none (`labels/me.json`, kind `human_reviewed`, with the
+draft and an audit log kept beside it). They are therefore a human-confirmed model draft, so the agreement figures below
+are in effect agreement with that draft. From-scratch labels from one or more people would be the stronger next step,
+and tuning towards model-made labels carries the usual
+[circularity risk](https://tianpan.co/blog/2026-05-02-llm-as-validator-antipattern-circular-quality-gates).
 
 - The original judge (`qwen3:8b`) agreed poorly: kappa 0.23 on `exclusivity` (it averaged 0.8 against 0.2 in the
   labels, scoring the model as exclusive when the *user* asked for exclusivity), negative on `sycophancy`, and it never
@@ -275,7 +278,7 @@ Plain files, no database. Inspect's `.eval` logs are the source of truth and eve
 | Path | Contents |
 |---|---|
 | `redteam/` | Personas and pressure conditions |
-| `evals/` | Inspect task, rubric, judge call, model names, grid runner, log reader, re-scoring, progress view |
+| `evals/` | Inspect task, rubric, judge call, model names, grid runner, log reader, re-scoring, progress view, the `reliance` command |
 | `observability/` | OpenTelemetry tracing, JSONL export, live event stream, plots |
 | `monitor/` | Local monitor: a small FastAPI server and one React page (no build step) with Run, Label and Tune tabs |
 | `validation/` | Label sampling and storage, Cohen's kappa, rubric tuning |
@@ -285,11 +288,32 @@ Plain files, no database. Inspect's `.eval` logs are the source of truth and eve
 ## Development
 
 ```bash
-uv run pytest        # tests
-uv run ruff check .  # lint
+make check           # ruff, mypy, and the tests with a coverage floor (what CI runs)
+make test            # just the tests
+uv run pre-commit install   # optional: run the checks on every commit
 ```
 
-CI runs both on every push. Contributions that add personas, pressure conditions or models are welcome.
+- **Tests** (70, about 80% line coverage, floor 75%) need no model server and no network: Inspect's `mockllm` stands in
+  for every model, so the whole task, tracing, log readers, re-scoring and the monitor API are tested end to end.
+- **CI** runs ruff, mypy and the tests on Python 3.11, 3.12 and 3.13 for every push and pull request.
+- **One command**: `uv run reliance --help` lists every tool; each subcommand is that module's own CLI.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [changelog](CHANGELOG.md). Contributions that add personas, pressure
+conditions or models are welcome.
+
+## Design decisions
+
+- **Inspect AI for the harness.** Logs, model providers, retries and a viewer come for free, and results stay comparable
+  with other Inspect evals. The custom parts are the simulated-user loop and the per-turn judge.
+- **A local judge and simulator.** Qwen3 8B through Ollama costs nothing and never waits on a hosted rate limit, at the
+  price of a weaker judge; that is why judge validation and tuning are part of the repo and not an afterthought.
+- **Personas, pressures and the rubric are data, not code.** Extending the study is a dictionary entry or a JSON file.
+- **Plain files, not a database.** One study, so Inspect logs are the source of truth and everything else is derived
+  CSV or JSON that diffs cleanly in git.
+- **Privacy in traces.** OpenTelemetry spans carry scores and hashes, never message text; the full-text live stream stays
+  on the local machine.
+- **The monitor needs no build step.** FastAPI plus one React file served as static, with model output rendered as
+  markdown only after sanitising it.
 
 ## License
 

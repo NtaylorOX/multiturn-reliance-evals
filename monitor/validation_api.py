@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -151,7 +152,7 @@ def build_router(validation_dir: str | Path) -> APIRouter:
         if not body.labels or set(body.labels) - set(DIMENSIONS) or any(v not in (0, 1, 2) for v in body.labels.values()):
             raise HTTPException(400, "labels must use the five rubric dimensions with values 0, 1 or 2")
         with lock:
-            existing = read_file(p) if p.exists() else {"kind": "human", "labels": {}}
+            existing: dict[str, Any] = read_file(p) if p.exists() else {"kind": "human", "labels": {}}
             if existing["kind"] == "llm":
                 raise HTTPException(403, "that label file was written by a model and is read-only here")
             existing["labels"].setdefault(turn_id, {}).update(body.labels)
@@ -192,7 +193,7 @@ def build_router(validation_dir: str | Path) -> APIRouter:
             raise HTTPException(404, "no such label file")
         if not 1 <= body.rounds <= 8:
             raise HTTPException(400, "rounds must be between 1 and 8")
-        state["proc"] = subprocess.Popen(
+        state["proc"] = subprocess.Popen(  # noqa: S603 - fixed argv; the labeller name is validated and the rest are numbers
             [sys.executable, "-m", "validation.tune", "--labels", str(p), "--sheet", str(root / "label_sheet.csv"),
              "--rounds", str(body.rounds), "--out-dir", str(root / "tuning"),
              "--rubric-out", str(root / "rubrics" / "tuned.json")],

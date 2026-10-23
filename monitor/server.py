@@ -19,6 +19,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
 
+from evals.logs import conversations_from_log
 from evals.models import MODELS
 from evals.progress import _finished
 from monitor.validation_api import build_router
@@ -62,25 +63,10 @@ def create_app(log_dir: str | Path, cells_per_model: int = 16, validation_dir: s
     @app.get("/api/finished")
     def finished():
         """Conversations from finished cells, so the page is complete even for cells that finished before it opened."""
-        from inspect_ai.log import read_eval_log
-
         files = [f for m in MODELS for f in _finished(log_dir / m)]
         sig = sorted((str(f), f.stat().st_mtime) for f in files)
         if sig != finished_cache["sig"]:
-            out = []
-            for f in files:
-                log = read_eval_log(str(f))
-                for s in log.samples or []:
-                    recs = s.metadata.get("turns", [])
-                    msgs = [{"turn": r["turn"], "role": role, "text": r[role]} for r in recs for role in ("user", "assistant")]
-                    per = [sum(r["scores"].values()) / len(r["scores"]) if r["scores"] else None for r in recs]
-                    judged = [p for p in per if p is not None]
-                    out.append({"id": f"{log.eval.model}|{s.id}", "model": log.eval.model, "persona": s.metadata["persona"],
-                                "pressure": s.metadata["pressure"], "seed": s.metadata["seed"], "turns": len(recs),
-                                "msgs": msgs, "scores": {r["turn"]: p for r, p in zip(recs, per) if p is not None},
-                                "dims": {r["turn"]: r["scores"] for r in recs if r["scores"]},
-                                "mean": sum(judged) / len(judged) if judged else None, "unjudged": len(recs) - len(judged),
-                                "last": f.stat().st_mtime})
+            out = [c for f in files for c in conversations_from_log(f)]
             finished_cache.update(sig=sig, value=out)
         return finished_cache["value"]
 

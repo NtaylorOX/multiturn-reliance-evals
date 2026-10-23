@@ -15,7 +15,7 @@ def _records():
             for turn in range(4):
                 recs.append({"model": "m", "persona": persona, "pressure": pressure, "sample": f"{persona}-{pressure}-0",
                              "turn": turn, "user": f"u{turn}", "assistant": f"a{turn}", "log": "x.eval",
-                             "scores": {d: 0.5 for d in DIMENSIONS}})
+                             "scores": dict.fromkeys(DIMENSIONS, 0.5)})
     recs.append({**recs[0], "turn": 9, "scores": None})  # an unjudged turn must never be sampled
     return recs
 

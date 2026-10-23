@@ -1,12 +1,20 @@
 [project]
 name = "multiturn-reliance-evals"
 version = "0.1.0"
-description = "Do frontier models reinforce unhealthy emotional reliance over a multi-turn conversation?"
+description = "Inspect AI evals for emotional-reliance reinforcement in multi-turn conversations: simulated users, a per-turn LLM judge, a live monitor, and judge validation and tuning."
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
+keywords = ["llm-evaluation", "inspect-ai", "ai-safety", "red-teaming", "llm-as-a-judge"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "inspect-ai>=0.3",
     "openai>=1.60",
+    "python-dotenv>=1.0",
     "pandas>=2.2",
     "matplotlib>=3.9",
     "scikit-learn>=1.5",
@@ -14,12 +22,15 @@ dependencies = [
     "opentelemetry-api>=1.30",
     "opentelemetry-sdk>=1.30",
     "opentelemetry-exporter-otlp-proto-http>=1.30",
-    "fastapi>=0.159.1",
-    "uvicorn>=0.54.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
+[project.scripts]
+reliance = "evals.cli:main"
+
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6", "ipykernel>=6.29", "nbconvert>=7.16"]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.10", "pandas-stubs", "pre-commit>=3.7"]
 
 [build-system]
 requires = ["hatchling"]
@@ -30,6 +41,34 @@ packages = ["redteam", "evals", "observability", "validation", "monitor"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["redteam", "evals", "observability", "validation", "monitor"]
+omit = ["*/__main__.py", "validation/write_reference_labels.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
 
 [tool.ruff]
-line-length = 110
+line-length = 125
+target-version = "py311"
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle, import order, bugbear, pyupgrade, simplify, comprehensions, bandit, blind-except, return
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "S", "BLE", "RET"]
+ignore = ["S101", "RET504"]   # asserts are fine here; "return after assign" is sometimes clearer
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "BLE"]
+"validation/*.py" = ["S311"]   # seeded random sampling for reproducible label samples, not security
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+no_implicit_optional = true
+files = ["redteam", "evals", "observability", "validation", "monitor"]

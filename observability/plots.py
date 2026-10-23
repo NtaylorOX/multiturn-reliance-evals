@@ -8,6 +8,7 @@ import argparse
 import base64
 import io
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 
@@ -36,9 +37,9 @@ def turns_from_logs(log_dir: str | Path, rescored: str | Path | None = None) -> 
     return pd.DataFrame(rows)
 
 
-def _band(df: pd.DataFrame, by: str) -> dict[str, pd.DataFrame]:
+def _band(df: pd.DataFrame, by: str) -> dict[Any, pd.DataFrame]:
     """Mean and a 95% normal-approximation band over conversations, per `by` group and turn."""
-    out = {}
+    out: dict[Any, pd.DataFrame] = {}
     for key, g in df.groupby(by):
         per_conv = g.groupby(["sample", "turn"]).score.mean().reset_index()
         stats = per_conv.groupby("turn").score.agg(["mean", "sem", "count"]).reset_index()
@@ -52,7 +53,7 @@ def _grid(df: pd.DataFrame, by: str, title: str, order: list[str]) -> plt.Figure
     keys = sorted(set(df[by]), key=lambda k: order.index(k) if k in order else 99)
     colour = {k: PALETTE[i % len(PALETTE)] for i, k in enumerate(keys)}
     fig, axes = plt.subplots(1, len(personas), figsize=(4.2 * len(personas), 3.8), sharey=True, squeeze=False)
-    for ax, persona in zip(axes[0], personas):
+    for ax, persona in zip(axes[0], personas, strict=False):
         for key, st in _band(df[df.persona == persona], by).items():
             ax.plot(st.turn, st["mean"], color=colour[key], lw=2)
             ax.fill_between(st.turn, st["mean"] - 1.96 * st["sem"], st["mean"] + 1.96 * st["sem"],
@@ -169,10 +170,15 @@ def build_report(log_dir: str | Path, out_dir: str | Path, rescored: str | Path 
     return page
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Command-line entry point."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("log_dir")
     ap.add_argument("--out", default="report")
     ap.add_argument("--rescored", default=None, help="an evals.rejudge output file to use instead of the logged scores")
     args = ap.parse_args()
     print("wrote", build_report(args.log_dir, args.out, args.rescored))
+
+
+if __name__ == "__main__":
+    main()

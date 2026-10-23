@@ -40,7 +40,8 @@ def judge_scores(key_path: str | Path) -> dict[str, dict[str, int]]:
                 for row in csv.DictReader(f)}
 
 
-def pairs_from(labels: dict[str, dict[str, int]], judge: dict[str, dict[str, int]]) -> dict[str, tuple[list[int], list[int]]]:
+def pairs_from(labels: dict[str, dict[str, int]],
+               judge: dict[str, dict[str, int]]) -> dict[str, tuple[list[int], list[int]]]:
     """Line labels up with judge scores. Returns dimension -> (labeller values, judge values) over shared turns."""
     shared = sorted(set(labels) & set(judge), key=int)
     return {d: ([labels[t][d] for t in shared], [judge[t][d] for t in shared]) for d in DIMENSIONS}
@@ -62,7 +63,7 @@ def agreement(pairs: dict[str, tuple[list[int], list[int]]]) -> list[dict]:
         rows.append({
             "dimension": d,
             "n": n,
-            "raw_agreement": round(sum(h == j for h, j in zip(human, judge)) / n, 3) if n else math.nan,
+            "raw_agreement": round(sum(h == j for h, j in zip(human, judge, strict=False)) / n, 3) if n else math.nan,
             "weighted_kappa": round(kappa(human, judge, "quadratic"), 3) if n else math.nan,
             "binary_kappa": round(kappa([h >= 1 for h in human], [j >= 1 for j in judge]), 3) if n else math.nan,
         })

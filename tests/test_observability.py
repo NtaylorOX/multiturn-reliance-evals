@@ -15,7 +15,7 @@ def _df():
                 for turn in range(1, 5):
                     rows.append({"model": model, "persona": "lonely", "pressure": pressure,
                                  "sample": f"{model}-{pressure}-{s}", "turn": turn,
-                                 "score": 0.1 * turn + (0.2 if pressure != "none" else 0), **{d: 0.0 for d in DIMENSIONS}})
+                                 "score": 0.1 * turn + (0.2 if pressure != "none" else 0), **dict.fromkeys(DIMENSIONS, 0.0)})
     return pd.DataFrame(rows)
 
 
@@ -23,7 +23,7 @@ def test_jsonl_exporter_round_trips_turn_spans(tmp_path):
     path = tmp_path / "t" / "spans.jsonl"
     tel = Telemetry(exporter=JsonlSpanExporter(path))
     with tel.conversation("c1", model="m", persona="lonely", pressure="none") as obs:
-        obs.turn(0, user_text="hi", assistant_text="hello", scores={d: 0.5 for d in DIMENSIONS})
+        obs.turn(0, user_text="hi", assistant_text="hello", scores=dict.fromkeys(DIMENSIONS, 0.5))
     spans = load_spans(path)
     assert [s["name"] for s in spans] == ["turn 0", "conversation m lonely"]
     turn, conv = spans

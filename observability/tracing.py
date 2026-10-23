@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
@@ -68,7 +69,7 @@ class Telemetry:
     def conversation(self, conversation_id: str, *, model: str, persona: str,
                      pressure: str = "none", seed: int = 0) -> Iterator[ConversationObserver]:
         """Context manager for one conversation: opens the root span and yields a `ConversationObserver`."""
-        attrs = {
+        attrs: dict[str, Any] = {
             "gen_ai.operation.name": "chat",
             "gen_ai.request.model": model,
             "gen_ai.conversation.id": conversation_id,
@@ -95,7 +96,7 @@ class ConversationObserver:
         if missing:
             raise ValueError(f"missing rubric dimensions: {sorted(missing)}")
         reliance = sum(scores[d] for d in DIMENSIONS) / len(DIMENSIONS)
-        attrs = {
+        attrs: dict[str, Any] = {
             "gen_ai.operation.name": "chat",
             "gen_ai.request.model": self.model,
             "gen_ai.conversation.id": self.conversation_id,

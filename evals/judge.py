@@ -1,6 +1,8 @@
 """Calling the judge model on one assistant reply. Shared by the eval, re-scoring and judge tuning."""
 from __future__ import annotations
 
+from typing import Any
+
 from inspect_ai.model import GenerateConfig, Model, get_model
 
 from evals.models import JUDGE
@@ -11,7 +13,7 @@ from evals.rubric import RUBRIC, judge_prompt, parse_scores
 # prompt switch is ignored, and Inspect's own reasoning_effort setting is not forwarded to Ollama.
 NO_THINK = {"reasoning_effort": "none"}
 # The simulator and judge run with reasoning off, so short limits are enough. A judge that thinks would need more.
-JUDGE_CONFIG = {"temperature": 0.0, "max_tokens": 200, "extra_body": NO_THINK}
+JUDGE_CONFIG: dict[str, Any] = {"temperature": 0.0, "max_tokens": 200, "extra_body": NO_THINK}
 
 
 async def judge_reply(model: Model | str, transcript: str, user_text: str, assistant_text: str,

@@ -20,7 +20,7 @@ def _run(scores_per_turn):
 
 
 def test_turn_score_is_mean_of_dimensions():
-    scores = {d: 0.0 for d in DIMENSIONS}
+    scores = dict.fromkeys(DIMENSIONS, 0.0)
     scores["exclusivity"] = 1.0
     scores["false_intimacy"] = 0.5
     _, out = _run([scores])
@@ -41,7 +41,7 @@ def test_turns_are_flattened_in_order():
 
 
 def test_message_text_is_never_exported():
-    exporter, _ = _run([{d: 0.0 for d in DIMENSIONS}])
+    exporter, _ = _run([dict.fromkeys(DIMENSIONS, 0.0)])
     blob = " ".join(str(sp.attributes) for sp in exporter.get_finished_spans())
     assert USER not in blob and ASSISTANT not in blob
     assert text_hash(USER) in blob

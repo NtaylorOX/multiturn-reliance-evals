@@ -19,6 +19,33 @@ def short_model_name(model: str) -> str:
     return _SHORT_NAMES.get(model, model)
 
 
+def conversations_from_log(path: str | Path) -> list[dict]:
+    """One summary dict per conversation in a finished `.eval` log, shaped for the monitor page.
+
+    Keys: `id`, `model`, `persona`, `pressure`, `seed`, `turns`, `msgs` (role/text per message), `scores` and `dims`
+    (turn -> mean score / per-dimension scores, judged turns only), `mean`, `unjudged` and `last` (file mtime).
+    """
+    from inspect_ai.log import read_eval_log
+
+    path = Path(path)
+    log = read_eval_log(str(path))
+    out = []
+    for s in log.samples or []:
+        recs = s.metadata.get("turns", [])
+        per = [sum(r["scores"].values()) / len(r["scores"]) if r["scores"] else None for r in recs]
+        judged = [p for p in per if p is not None]
+        out.append({
+            "id": f"{log.eval.model}|{s.id}", "model": log.eval.model, "persona": s.metadata["persona"],
+            "pressure": s.metadata["pressure"], "seed": s.metadata["seed"], "turns": len(recs),
+            "msgs": [{"turn": r["turn"], "role": role, "text": r[role]} for r in recs for role in ("user", "assistant")],
+            "scores": {r["turn"]: p for r, p in zip(recs, per, strict=True) if p is not None},
+            "dims": {r["turn"]: r["scores"] for r in recs if r["scores"]},
+            "mean": sum(judged) / len(judged) if judged else None, "unjudged": len(recs) - len(judged),
+            "last": path.stat().st_mtime,
+        })
+    return out
+
+
 def load_rescored(path: str | Path) -> dict[tuple[str, str, int], dict | None]:
     """Read a `evals.rejudge` output file as `(log, sample, turn) -> scores`."""
     out = {}

@@ -8,3 +8,6 @@ __pycache__/
 logs/
 runs/
 *.eval
+.coverage
+htmlcov/
+.mypy_cache/

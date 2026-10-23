@@ -27,7 +27,7 @@ import math
 import random
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
 from inspect_ai.model import GenerateConfig, get_model
@@ -41,7 +41,8 @@ from validation.labels import labeller_kind, load_labels
 
 Rubric = dict[str, str]
 Turn = dict[str, str]
-JudgeFn = Callable[[Rubric, Turn], Awaitable["dict[str, int] | None"]]
+Scores = dict[str, int]   # dimension -> 0, 1 or 2
+JudgeFn = Callable[[Rubric, Turn], Awaitable["Scores | None"]]
 OptimiserFn = Callable[[str], Awaitable[str]]
 
 
@@ -54,22 +55,23 @@ def split_ids(ids: list[str], heldout_fraction: float, seed: int = 0) -> tuple[l
     return sorted(ids[n_held:], key=int), sorted(ids[:n_held], key=int)
 
 
-def summarise(labels: dict[str, dict[str, int]], judged: dict[str, dict[str, int]], ids: list[str]) -> dict:
+def summarise(labels: dict[str, dict[str, int]], judged: Mapping[str, Scores | None], ids: list[str]) -> dict:
     """Agreement of the judge with the labels over `ids`: per-dimension MAE, raw agreement and weighted kappa.
 
     `mae` (mean absolute error on the 0..2 scale, averaged over dimensions) is what tuning minimises: unlike
     kappa it is defined when a dimension has no positive labels. `kappa` is the mean of the defined weighted kappas.
     """
-    ids = [i for i in ids if i in judged and judged[i] is not None]
+    scored: dict[str, Scores] = {i: s for i in ids if (s := judged.get(i)) is not None}
+    ids = list(scored)
     per: dict[str, dict] = {}
     for d in DIMENSIONS:
         h = [labels[i][d] for i in ids]
-        j = [judged[i][d] for i in ids]
+        j = [scored[i][d] for i in ids]
         k = kappa(h, j, "quadratic") if ids else math.nan
         per[d] = {
             "n": len(ids),
-            "mae": round(sum(abs(a - b) for a, b in zip(h, j)) / len(ids), 3) if ids else None,
-            "raw_agreement": round(sum(a == b for a, b in zip(h, j)) / len(ids), 3) if ids else None,
+            "mae": round(sum(abs(a - b) for a, b in zip(h, j, strict=False)) / len(ids), 3) if ids else None,
+            "raw_agreement": round(sum(a == b for a, b in zip(h, j, strict=False)) / len(ids), 3) if ids else None,
             "weighted_kappa": None if math.isnan(k) else round(k, 3),
         }
     kappas = [v["weighted_kappa"] for v in per.values() if v["weighted_kappa"] is not None]
@@ -79,7 +81,7 @@ def summarise(labels: dict[str, dict[str, int]], judged: dict[str, dict[str, int
 
 
 async def evaluate(rubric: Rubric, turns: dict[str, Turn], ids: list[str], judge: JudgeFn,
-                   concurrency: int = 2) -> dict[str, dict[str, int] | None]:
+                   concurrency: int = 2) -> dict[str, Scores | None]:
     """Judge each of `ids` under `rubric`. Returns turn id -> dimension -> 0..2 (None where the judge failed)."""
     sem = asyncio.Semaphore(concurrency)
 
@@ -92,17 +94,19 @@ async def evaluate(rubric: Rubric, turns: dict[str, Turn], ids: list[str], judge
 
 
 def reflect_prompt(rubric: Rubric, turns: dict[str, Turn], labels: dict[str, dict[str, int]],
-                   judged: dict[str, dict[str, int] | None], ids: list[str], k: int = 8) -> str:
+                   judged: Mapping[str, Scores | None], ids: list[str], k: int = 8) -> str:
     """The prompt that asks the optimiser to rewrite the rubric, built from the `k` worst disagreements."""
     def err(i: str) -> int:
-        return sum(abs(labels[i][d] - judged[i][d]) for d in DIMENSIONS) if judged.get(i) else 0
+        s = judged.get(i)
+        return sum(abs(labels[i][d] - s[d]) for d in DIMENSIONS) if s else 0
 
     worst = [i for i in sorted(ids, key=err, reverse=True) if err(i) > 0][:k]
     blocks = []
     for i in worst:
         t = turns[i]
-        diffs = ", ".join(f"{d}: label {labels[i][d]} vs judge {judged[i][d]}"
-                          for d in DIMENSIONS if labels[i][d] != judged[i][d])
+        s = judged.get(i) or {}
+        diffs = ", ".join(f"{d}: label {labels[i][d]} vs judge {s.get(d)}"
+                          for d in DIMENSIONS if labels[i][d] != s.get(d))
         blocks.append(f"USER: {t['user'][:400]}\nASSISTANT REPLY: {t['assistant'][:700]}\nDISAGREEMENTS: {diffs}")
     defs = json.dumps(rubric, indent=1)
     return (
@@ -128,7 +132,8 @@ def parse_rubric(text: str, current: Rubric) -> Rubric | None:
             obj, _ = dec.raw_decode(text[m.start():])
         except json.JSONDecodeError:
             continue
-        if isinstance(obj, dict) and set(obj) == set(current) and all(isinstance(v, str) and v.strip() for v in obj.values()):
+        valid = isinstance(obj, dict) and set(obj) == set(current)
+        if valid and all(isinstance(v, str) and v.strip() for v in obj.values()):
             return {d: obj[d].strip() for d in DIMENSIONS}
     return None
 
