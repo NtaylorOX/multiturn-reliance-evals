@@ -7,7 +7,7 @@ This repo is a small, reusable pipeline for answering that question, plus a pilo
 A target model talks to an LLM-simulated user for ten turns. After every assistant reply, a judge model scores
 the reply on five signs of reliance-reinforcing behaviour. You get a per-turn score for every model, persona
 and pressure condition, per-turn traces, a live monitor while it runs, and tooling to check the judge against
-human labels.
+labels and to tune its rubric.
 
 It is built on [Inspect AI](https://inspect.aisi.org.uk/), so models are interchangeable with a one-line
 change and every run produces a standard Inspect log.
@@ -20,7 +20,8 @@ flowchart LR
     J -- 5 scores per turn --> L[(Inspect logs)]
     T -. reply .-> S
     L --> O[plots, traces, monitor<br/><code>observability/</code>, <code>monitor/</code>]
-    L --> V[human labels + Cohen's kappa<br/><code>validation/</code>]
+    L --> V[labels, Cohen's kappa,<br/>rubric tuning<br/><code>validation/</code>]
+    V -- tuned rubric --> J
 ```
 
 ## What it measures
@@ -60,7 +61,7 @@ uv run inspect eval evals/conversation.py --model ollama/llama3.1:8b \
 # the whole grid: models x personas x pressures
 uv run python -m evals.run --models llama31-8b --n 1 --log-dir logs/my-run
 
-# watch it live (conversations as they happen, progress per model)
+# the monitor: live conversations and progress, plus the Label and Tune tabs
 uv run python -m monitor.server logs/my-run        # http://localhost:8765
 
 # plots, CSVs and a static HTML report from the logs
@@ -74,25 +75,86 @@ and the target models you choose. Hosted models work through any Inspect provide
 ## Pilot results
 
 The pilot ran the full grid once: 3 models x 4 personas x 4 pressure conditions x **1** conversation of 10 turns
-(48 conversations, 480 judged turns). Raw per-turn scores and figures are in [`results/pilot/`](results/pilot).
+(48 conversations, 480 judged turns). Per-turn scores and figures are in [`results/pilot/`](results/pilot) (original
+judge) and [`results/pilot_tuned/`](results/pilot_tuned) (the same conversations re-scored with the tuned rubric, see
+[Validating and tuning the judge](#validating-and-tuning-the-judge)).
 
-![Reliance by pressure condition](results/pilot/headline_by_pressure.png)
+![Reliance by pressure condition, tuned judge](results/pilot_tuned/headline_by_pressure.png)
 
-Mean reliance per conversation, averaged over personas (n = 4 conversations per cell):
+Mean reliance per conversation by pressure condition, over all models and personas (n = 12 conversations per column):
+
+| Judge | none | exclusivity | availability | discourage_support |
+|---|---|---|---|---|
+| original rubric | 0.03 | 0.31 | 0.22 | 0.13 |
+| tuned rubric | 0.02 | 0.24 | 0.26 | 0.13 |
+
+Per model, tuned judge (n = 4 conversations per cell):
 
 | Model | none | exclusivity | availability | discourage_support |
 |---|---|---|---|---|
-| `deepseek-r1` (8B, local) | 0.02 | 0.34 | 0.30 | 0.08 |
-| `llama3.1:8b` (local) | 0.05 | 0.32 | 0.22 | 0.11 |
-| `nemotron-3-ultra-550b` (hosted) | 0.02 | 0.27 | 0.15 | 0.21 |
+| `deepseek-r1` (8B, local) | 0.02 | 0.37 | 0.37 | 0.11 |
+| `llama3.1:8b` (local) | 0.02 | 0.16 | 0.29 | 0.12 |
+| `nemotron-3-ultra-550b` (hosted) | 0.02 | 0.19 | 0.12 | 0.18 |
 
-By persona: distressed 0.24, lonely 0.22, dependent 0.15, control 0.08.
+What holds under both judges: unpressured conversations score near zero, every pressure condition raises the score,
+and `deepseek-r1` is highest overall. What does not: the ordering of the pressure conditions and of the other two
+models moved when the rubric changed.
 
-**Read these as a pilot.** One conversation per cell means the confidence intervals are wide (the dots in the
-figure are individual conversations) and differences between models are within noise. The judge has not yet been
-validated against human labels; see [Validating the judge](#validating-the-judge).
+**Read these as a pilot.** One conversation per cell means the confidence intervals are wide (the dots in the figure
+are individual conversations) and differences between models are within noise. The judge is a small local model and
+agrees only moderately with the reference labels, see below.
 
 <!-- Motivation, findings, limitations and the regulatory framing are written separately. -->
+
+## Validating and tuning the judge
+
+An LLM judge is only useful if it agrees with a careful labeller, and its rubric can be improved from the
+disagreements. The repo covers both, from the browser or the command line.
+
+**1. Draw a blind sample and label it.**
+
+```bash
+uv run python -m validation.sample logs/my-run --n 30    # label_sheet.csv (blind) + label_key.csv
+```
+
+Open the monitor's **Label** tab, enter a name and score each turn 0/1/2 on the five dimensions (the judge's scores
+are hidden). Labels are saved after every click to `validation/labels/<name>.json`, validated, written atomically and
+logged. Reload and it resumes at the first unlabelled turn.
+
+**2. Measure agreement.**
+
+```bash
+uv run python -m validation.kappa validation/labels/<name>.json validation/label_key.csv
+```
+
+Reports raw agreement, quadratic-weighted Cohen's kappa and a binary (sign present or not) kappa per dimension.
+Kappa is undefined when a rater uses one constant label, which happens for rare dimensions on small samples.
+
+**3. Tune the rubric** (the monitor's **Tune judge** tab, or `uv run python -m validation.tune`). A small reflective
+optimiser, in the family of [GEPA and DSPy's MIPROv2](https://dropbox.tech/machine-learning/how-we-turned-ai-evaluations-into-better-responses-in-dash-chat)
+and [MLflow's GEPA alignment optimizer](https://mlflow.org/docs/latest/genai/eval-monitor/scorers/llm-judge/gepa/):
+it scores labelled turns, shows the worst disagreements to an optimiser model, asks for rewritten dimension
+definitions, keeps a rewrite only if it agrees better, and finally compares baseline and tuned rubrics on held-out
+turns. Progress is written to `validation/tuning/<id>.json` after every round and shown live in the UI.
+
+**4. Re-score without rerunning.** `uv run python -m evals.rejudge logs/my-run --rubric validation/rubrics/tuned.json --out rescored.jsonl`,
+then pass `--rescored rescored.jsonl` to the plots. Conversations are untouched; only the scores change.
+
+### What the pilot's validation found
+
+The 30 labelled turns were **labelled by Claude, not by a human**, blind to the judge's scores. They are stored with
+`kind: "llm"` and are read-only in the UI. They show the method working but not human validity; replace them with your
+own labels to get a human-agreement figure. Tuning a judge towards another model's labels also only makes it resemble
+that model, a circularity [practitioners warn about](https://tianpan.co/blog/2026-05-02-llm-as-validator-antipattern-circular-quality-gates).
+
+- The original judge (`qwen3:8b`) agreed poorly: kappa 0.23 on `exclusivity` (it averaged 0.8 against 0.2 in the
+  labels, scoring the model as exclusive when the *user* asked for exclusivity), negative on `sycophancy`, and it never
+  flagged `discourages_outside_support` or `failure_to_redirect`.
+- Tuning added the rule that exclusivity must be the assistant's own framing and listed what does not count. On 10
+  held-out turns, mean absolute error went from 0.28 to 0.26 and mean kappa from 0.18 to 0.24. With 10 turns that is
+  indicative only, and `exclusivity` is still over-scored after tuning.
+- This follows the [criteria drift](https://arxiv.org/pdf/2404.12272) observation that people refine what they want
+  from a rubric by grading outputs, which is why labelling and tuning sit in one interactive loop.
 
 ## Reusing and extending
 
@@ -111,10 +173,11 @@ any [Inspect model string](https://inspect.aisi.org.uk/providers.html) (`anthrop
 
 **Change the rubric.** Edit `RUBRIC` in [`evals/rubric.py`](evals/rubric.py) and `DIMENSIONS` in
 [`observability/tracing.py`](observability/tracing.py), which must list the same names; a test checks that they match.
+To use a tuned or hand-edited rubric without touching code, pass `-T rubric=path/to/rubric.json`.
 
 **Change the judge or simulator.** Set `JUDGE` and `SIMULATOR` in [`evals/models.py`](evals/models.py), or pass
 `-T judge=... -T simulator=...`. Thinking is switched off for the default Qwen3 models; see the comment in
-[`evals/conversation.py`](evals/conversation.py) for why that needs a raw request parameter.
+[`evals/judge.py`](evals/judge.py) for why that needs a raw request parameter.
 
 **Use the per-turn data elsewhere.** [`evals.logs.iter_turn_records`](evals/logs.py) yields every judged turn from a log
 directory as plain dicts, and `turns.csv` in a report folder has the same data for pandas or a notebook.
@@ -124,29 +187,29 @@ directory as plain dicts, and `turns.csv` in a report folder has the same data f
 is never put in spans, only a hash and length; the monitor's separate local stream does carry text and never
 leaves your machine.
 
-## Validating the judge
+## Data layout
 
-An LLM judge is only useful if it agrees with a person. To measure that:
+Plain files, no database. Inspect's `.eval` logs are the source of truth and everything else is derived from them.
 
-```bash
-uv run python -m validation.sample logs/my-run --n 30     # writes validation/label_sheet.csv (blind) + label_key.csv
-# fill in the five 0/1/2 columns in label_sheet.csv, without looking at label_key.csv
-uv run python -m validation.kappa validation/label_sheet.csv validation/label_key.csv
-```
-
-The sample is stratified over pressure and persona, and the sheet hides the model name and the judge's scores.
-`kappa` reports raw agreement, quadratic-weighted kappa and a binary (sign present or not) kappa per dimension.
+| Data | Location | Format | In git |
+|---|---|---|---|
+| Conversations and per-turn scores | `logs/<run>/<model>/*.eval` | Inspect log | no |
+| Live events (with message text), spans | `logs/<run>/live.jsonl`, `spans.jsonl` | JSON lines | no |
+| Pilot per-turn scores, summaries, figures | `results/` | CSV, PNG, JSONL | yes |
+| Label sample and key | `validation/label_sheet.csv`, `label_key.csv` | CSV | yes |
+| Labels and their audit logs | `validation/labels/` | JSON, JSON lines | yes |
+| Tuning runs, tuned rubric | `validation/tuning/`, `validation/rubrics/` | JSON | yes |
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
 | `redteam/` | Personas and pressure conditions |
-| `evals/` | Inspect task (`conversation.py`), rubric, model names, grid runner, log reader, progress view |
+| `evals/` | Inspect task, rubric, judge call, model names, grid runner, log reader, re-scoring, progress view |
 | `observability/` | OpenTelemetry tracing, JSONL export, live event stream, plots |
-| `monitor/` | Local live monitor: a small FastAPI server and one React page (no build step) |
-| `validation/` | Blind label sheet and Cohen's kappa |
-| `results/pilot/` | Pilot per-turn scores and figures |
+| `monitor/` | Local monitor: a small FastAPI server and one React page (no build step) with Run, Label and Tune tabs |
+| `validation/` | Label sampling and storage, Cohen's kappa, rubric tuning |
+| `results/` | Pilot per-turn scores and figures |
 | `tests/` | Unit tests; none need a model or network |
 
 ## Development
