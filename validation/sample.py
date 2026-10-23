@@ -76,6 +76,7 @@ def write_sheets(records: list[dict], picked: list[dict], out_dir: Path) -> None
 
 
 def main() -> None:
+    """Command-line entry point."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("log_dir")
     ap.add_argument("--n", type=int, default=30)

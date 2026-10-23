@@ -40,6 +40,7 @@ async def rejudge(log_dir: str | Path, out: Path, judge: str = JUDGE, rubric_pat
     count = 0
 
     async def one(turns: list[dict], idx: int, fh) -> None:
+        """Re-score one turn unless it is already in the output file."""
         nonlocal count
         r = turns[idx]
         if (r["log"], r["sample"], r["turn"]) in done:
@@ -57,6 +58,7 @@ async def rejudge(log_dir: str | Path, out: Path, judge: str = JUDGE, rubric_pat
 
 
 def main() -> None:
+    """Command-line entry point."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("log_dir")
     ap.add_argument("--out", required=True)

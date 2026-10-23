@@ -86,9 +86,11 @@ def create_app(log_dir: str | Path, cells_per_model: int = 16, validation_dir: s
 
     @app.get("/api/stream")
     async def stream():
+        """Server-sent events: every line of the run live.jsonl, then new lines as they are written."""
         live = log_dir / "live.jsonl"
 
         async def gen():
+            """Yield events as SSE frames, with a keep-alive comment when idle."""
             offset = 0
             idle = 0
             while True:
@@ -110,6 +112,7 @@ def create_app(log_dir: str | Path, cells_per_model: int = 16, validation_dir: s
 
 
 def main() -> None:
+    """Command-line entry point: serve the monitor on localhost."""
     import uvicorn
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

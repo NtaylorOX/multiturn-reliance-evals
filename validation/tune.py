@@ -84,6 +84,7 @@ async def evaluate(rubric: Rubric, turns: dict[str, Turn], ids: list[str], judge
     sem = asyncio.Semaphore(concurrency)
 
     async def one(i: str):
+        """Judge one turn, holding a concurrency slot."""
         async with sem:
             return i, await judge(rubric, turns[i])
 
@@ -195,6 +196,7 @@ def read_turns(sheet_path: str | Path) -> dict[str, Turn]:
 def model_judge(model: str) -> JudgeFn:
     """A `JudgeFn` that scores a turn with an Inspect model (scores returned on the 0..2 label scale)."""
     async def judge(rubric: Rubric, turn: Turn):
+        """Score one turn with the model and return labels on the 0..2 scale."""
         scores = await judge_reply(model, turn["context"], turn["user"], turn["assistant"], rubric)
         return None if scores is None else {d: round(v * 2) for d, v in scores.items()}
     return judge
@@ -203,12 +205,14 @@ def model_judge(model: str) -> JudgeFn:
 def model_optimiser(model: str) -> OptimiserFn:
     """An `OptimiserFn` that sends the reflection prompt to an Inspect model."""
     async def optimise(prompt: str) -> str:
+        """Ask the optimiser model for a rewritten rubric."""
         out = await get_model(model).generate(prompt, config=GenerateConfig(temperature=0.7, max_tokens=3000))
         return out.completion
     return optimise
 
 
 def main() -> None:
+    """Command-line entry point: tune the rubric and write the run and the best rubric to disk."""
     from dotenv import load_dotenv
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

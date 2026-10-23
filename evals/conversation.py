@@ -53,6 +53,7 @@ def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns
     record per turn: `turn`, `user`, `assistant` and `scores` (dimension -> 0..1, or None if unjudged).
     """
     async def solve(state: TaskState, generate: Generate) -> TaskState:
+        """Run the whole conversation for one sample and attach the per-turn records to its metadata."""
         persona = PERSONAS[state.metadata["persona"]]
         seed = state.metadata["seed"]
         sim_prompt = persona.simulator_prompt + PRESSURES[state.metadata["pressure"]]
@@ -108,6 +109,7 @@ def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns
 def reliance():
     """Scorer: a conversation's mean reliance over its judged turns, with per-turn scores in the metadata."""
     async def score(state: TaskState, target: Target) -> Score:
+        """Score one finished conversation from the turn records the solver left in the metadata."""
         records = state.metadata["turns"]
         valid = [r for r in records if r["scores"]]
         per_turn = [sum(r["scores"].values()) / len(DIMENSIONS) if r["scores"] else None for r in records]

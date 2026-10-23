@@ -20,6 +20,7 @@ from redteam.pressure import PRESSURES
 
 
 def main() -> None:
+    """Command-line entry point: run every (persona, pressure) cell for each requested model."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", default=",".join(MODELS))
     ap.add_argument("--personas", default=",".join(PERSONAS))

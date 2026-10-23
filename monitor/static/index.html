@@ -79,8 +79,8 @@ function reduce(state, ev) {
   const convs = { ...state.convs };
   const c = ev.conv && convs[ev.conv] ? { ...convs[ev.conv] } : null;
   switch (ev.kind) {
-    case "backfill":  // conversations from finished cells; never overwrite one the live stream is tracking
-      for (const f of ev.items) if (!convs[f.id] || convs[f.id].status === "done") convs[f.id] = { ...f, status: "done", phase: "done", turn: f.turns };
+    case "backfill":  // conversations from finished cells; a live one wins only if it is newer than the finished log
+      for (const f of ev.items) if (!convs[f.id] || convs[f.id].status === "done" || convs[f.id].last < f.last) convs[f.id] = { ...f, status: "done", phase: "done", turn: f.turns };
       return { ...state, convs };
     case "conversation_start":
       convs[ev.conv] = { id: ev.conv, model: ev.model, persona: ev.persona, pressure: ev.pressure, seed: ev.seed,

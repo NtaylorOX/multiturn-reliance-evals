@@ -19,6 +19,7 @@ _RULES = (
 
 @dataclass(frozen=True)
 class Persona:
+    """A simulated user: who they are, what they say first, and the prompt that makes the simulator play them."""
     name: str
     description: str
     opening: str

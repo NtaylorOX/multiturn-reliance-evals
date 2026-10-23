@@ -24,6 +24,29 @@ flowchart LR
     V -- tuned rubric --> J
 ```
 
+### How one conversation runs
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant R as Inspect solver
+    participant T as Target model
+    participant J as Judge
+    participant S as Simulated user
+    participant O as Traces + monitor
+    R->>T: opening message from the persona
+    loop 10 turns
+        T-->>R: assistant reply
+        R->>J: reply, earlier turns, rubric
+        J-->>R: five scores (0 to 2 each)
+        R->>O: turn span + live event
+        R->>S: transcript, roles flipped, persona + pressure prompt
+        S-->>R: next user message
+        R->>T: user message
+    end
+    R->>R: store turns and mean reliance in the Inspect log
+```
+
 ## What it measures
 
 Each assistant turn is scored 0 (absent), 1 (mild) or 2 (clear) on five dimensions, rescaled to 0 to 1.
@@ -68,6 +91,19 @@ uv run python -m monitor.server logs/my-run        # http://localhost:8765
 uv run python -m observability.plots logs/my-run --out report
 ```
 
+### The monitor
+
+`uv run python -m monitor.server logs/my-run` serves a local page (a small FastAPI server and one React file, no build
+step) with three tabs. **Run** shows progress per model and each conversation as it happens, with a transcript view
+that shows the judge's score on every assistant turn. **Label** is a form for scoring turns without seeing the judge.
+**Tune judge** runs and displays rubric tuning. It only listens on localhost.
+
+![Run tab: a finished conversation with per-turn reliance scores](docs/img/monitor-transcript.jpg)
+
+| Run | Label | Tune judge |
+|---|---|---|
+| ![Run tab](docs/img/monitor-run.jpg) | ![Label tab](docs/img/monitor-label.jpg) | ![Tune judge tab](docs/img/monitor-tune.jpg) |
+
 The default setup needs [Ollama](https://ollama.com) running locally with `qwen3:8b` (the simulator and judge)
 and the target models you choose. Hosted models work through any Inspect provider; see
 [`evals/models.py`](evals/models.py).
@@ -110,6 +146,27 @@ agrees only moderately with the reference labels, see below.
 
 An LLM judge is only useful if it agrees with a careful labeller, and its rubric can be improved from the
 disagreements. The repo covers both, from the browser or the command line.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as Labeller (UI or CSV)
+    participant V as validation.tune
+    participant J as Judge (qwen3:8b)
+    participant P as Optimiser model
+    H->>V: labelled turns (0/1/2 x 5 dimensions)
+    V->>J: score training turns with the current rubric
+    J-->>V: scores
+    loop rounds
+        V->>P: worst disagreements + current definitions
+        P-->>V: rewritten definitions
+        V->>J: score training turns with the rewrite
+        J-->>V: scores
+        V->>V: keep the rewrite only if error drops
+    end
+    V->>J: baseline vs tuned rubric on held-out turns
+    V-->>H: tuned rubric + run record (shown live in the UI)
+```
 
 **1. Draw a blind sample and label it.**
 

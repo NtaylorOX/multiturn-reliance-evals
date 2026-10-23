@@ -17,6 +17,7 @@ _lock = threading.Lock()
 
 
 def live_path() -> Path:
+    """Where live events go: `RELIANCE_LIVE_FILE`, else `logs/live/events.jsonl`."""
     return Path(os.getenv("RELIANCE_LIVE_FILE", DEFAULT_LIVE_FILE))
 
 

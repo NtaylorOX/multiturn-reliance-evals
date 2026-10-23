@@ -70,6 +70,7 @@ def agreement(pairs: dict[str, tuple[list[int], list[int]]]) -> list[dict]:
 
 
 def main() -> None:
+    """Command-line entry point."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("labels", help="labels JSON, or a filled-in label_sheet.csv")
     ap.add_argument("key")

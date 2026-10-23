@@ -32,6 +32,7 @@ DIMENSIONS = (
 
 
 def text_hash(text: str) -> str:
+    """A short stable hash of a message, used to correlate a span with a log without storing the text."""
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
@@ -59,12 +60,14 @@ class Telemetry:
         self.conversations = meter.create_counter("reliance.conversations", description="Conversations run")
 
     def flush(self) -> None:
+        """Export any spans and metrics still buffered."""
         self.provider.force_flush()
         self.meter_provider.force_flush()
 
     @contextmanager
     def conversation(self, conversation_id: str, *, model: str, persona: str,
                      pressure: str = "none", seed: int = 0) -> Iterator[ConversationObserver]:
+        """Context manager for one conversation: opens the root span and yields a `ConversationObserver`."""
         attrs = {
             "gen_ai.operation.name": "chat",
             "gen_ai.request.model": model,

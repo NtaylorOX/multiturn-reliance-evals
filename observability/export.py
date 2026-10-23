@@ -17,6 +17,7 @@ class JsonlSpanExporter(SpanExporter):
     """Append one JSON object per finished span: ids, name, timing and attributes."""
 
     def __init__(self, path: str | Path) -> None:
+        """Create the output folder if needed; spans are appended to `path`."""
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -55,5 +56,6 @@ def get_telemetry() -> Telemetry:
 
 
 def load_spans(path: str | Path = DEFAULT_TRACE_FILE) -> list[dict]:
+    """Read a spans JSONL file back as a list of dicts."""
     with Path(path).open(encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]

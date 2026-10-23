@@ -30,6 +30,7 @@ def _finished(model_dir: Path) -> list[Path]:
 
 
 def snapshot(log_dir: Path, cells_per_model: int, run_output: Path | None = None) -> str:
+    """A text table of finished cells per model, time since the last finish, a rough ETA and rate-limit retries."""
     now = time.time()
     lines = [f"{'model':<14}{'cells done':>12}{'last finished':>16}"]
     stamps: list[float] = []
@@ -55,6 +56,7 @@ def snapshot(log_dir: Path, cells_per_model: int, run_output: Path | None = None
 
 
 def main() -> None:
+    """Command-line entry point."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("log_dir")
     ap.add_argument("--cells-per-model", type=int, default=16)
