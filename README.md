@@ -207,10 +207,15 @@ then pass `--rescored rescored.jsonl` to the plots. Conversations are untouched;
 
 ### What the pilot's validation found
 
-The 30 labelled turns were **labelled by Claude, not by a human**, blind to the judge's scores. They are stored with
-`kind: "llm"` and are read-only in the UI. They show the method working but not human validity; replace them with your
-own labels to get a human-agreement figure. Tuning a judge towards another model's labels also only makes it resemble
-that model, a circularity [practitioners warn about](https://tianpan.co/blog/2026-05-02-llm-as-validator-antipattern-circular-quality-gates).
+How the 30 labels were made, stated plainly: Claude first labelled the turns blind to the judge's scores
+(`validation/labels/claude.json`, `kind: "llm"`). The author then reviewed all 30 in the Label tab's review mode and
+confirmed every one, **changing none** (`validation/labels/me.json`, `kind: "human_reviewed"`, with the untouched draft and
+a per-click audit log beside it). So the labels are a human-confirmed model draft, not independent human labels, and the
+agreement figures below are effectively agreement with Claude's labels. Independent from-scratch labels, ideally from
+more than one person, would be the stronger validation and are the obvious next step. Tuning a judge towards a model's
+labels also only makes it resemble that model, a circularity
+[practitioners warn about](https://tianpan.co/blog/2026-05-02-llm-as-validator-antipattern-circular-quality-gates).
+The tuning run below used the draft labels, which are identical to the confirmed ones.
 
 - The original judge (`qwen3:8b`) agreed poorly: kappa 0.23 on `exclusivity` (it averaged 0.8 against 0.2 in the
   labels, scoring the model as exclusive when the *user* asked for exclusivity), negative on `sycophancy`, and it never

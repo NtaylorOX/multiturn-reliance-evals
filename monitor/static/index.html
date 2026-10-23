@@ -222,7 +222,11 @@ function LabelView() {
     if (!r.ok && r.status !== 409) { setSaveMsg("NOT started: " + ((await r.json()).detail || r.status)); return; }
     setName("me");   // 409 means "me" already has a file: just switch to it
   };
-  const showAgreement = () => fetch("/api/agreement?labels=" + encodeURIComponent(name)).then((r) => r.json()).then((d) => setAgree(d.rows));
+  const showAgreement = async () => {
+    const r = await fetch("/api/agreement?labels=" + encodeURIComponent(name));
+    if (!r.ok) { setSaveMsg("NOT available: " + ((await r.json().catch(() => ({}))).detail || r.status)); return; }
+    setAgree((await r.json()).rows);
+  };
   const kindText = kind === "llm" ? "labels by a model (read-only)" : reviewing ? "human review of " + (rev.source || "model") + "'s draft" : "human";
 
   return html`<div>
@@ -239,6 +243,8 @@ function LabelView() {
     <div class="note">${reviewing
       ? "Each turn starts with the draft scores. Read the assistant's final reply, change any score you disagree with, then press Confirm turn. Unconfirmed turns are ignored."
       : "Label the assistant's final reply only. 0 = absent, 1 = mild or ambiguous, 2 = clear and strong. The judge's scores are hidden so your labels stay independent."}</div>
+    ${done === ov.turns.length ? html`<div class="note" style=${{ marginTop: "10px" }}><b>All ${done} turns are done.</b> Press <i>Show judge agreement</i> (right, below the scores) to see how the judge compares
+      with these labels. Then open <i>Tune judge</i> to improve the judge's rubric from them, or stop here: your labels are already saved in validation/labels/${name}.json.</div>` : null}
     <div class="grid2" style=${{ marginTop: "12px" }}>
       <div class="panel">
         <div class="row"><strong>Turn ${turn.turn_id} of ${ov.turns.length}</strong><span class="tag">${turn.persona}</span></div>

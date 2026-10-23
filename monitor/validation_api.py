@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 import subprocess
 import sys
@@ -167,7 +168,9 @@ def build_router(validation_dir: str | Path) -> APIRouter:
         p = labels_path(labels)
         if not p.exists() or not key.exists():
             raise HTTPException(404, "labels or key file missing")
-        return {"rows": agreement(load_pairs(p, key))}
+        rows = agreement(load_pairs(p, key))
+        # Kappa is NaN when a rater used one constant label, and NaN is not valid JSON: send null instead.
+        return {"rows": [{k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in r.items()} for r in rows]}
 
     @router.get("/api/tuning")
     def tuning_runs():
