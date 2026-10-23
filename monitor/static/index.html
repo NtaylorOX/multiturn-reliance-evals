@@ -275,7 +275,7 @@ function Metric({ m }) {
 function TuneView() {
   const [data, setData] = useState({ runs: [], running: false });
   const [labellers, setLabellers] = useState({});
-  const [labels, setLabels] = useState("claude");
+  const [labels, setLabels] = useState("");
   const [rounds, setRounds] = useState(4);
   const [err, setErr] = useState("");
   const base = ((window.__rubric) || {});
@@ -287,20 +287,29 @@ function TuneView() {
   }, []);
   const start = () => fetch("/api/tuning/start", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ labels, rounds: Number(rounds) }) }).then(async (r) => setErr(r.ok ? "" : (await r.json()).detail));
-  const run = data.runs[0];
+  const [picked, setPicked] = useState(null);
+  const run = data.runs.find((r) => r.id === picked) || data.runs[0];   // newest unless one is picked
+  const KIND = { llm: "model-written", human: "human", human_reviewed: "human-confirmed draft" };
+  // Prefer the most trusted label set that exists as the default for a new run.
+  useEffect(() => {
+    const order = ["human", "human_reviewed", "llm"];
+    const best = Object.entries(labellers).sort((a, b) => order.indexOf(a[1].kind) - order.indexOf(b[1].kind))[0];
+    if (best) setLabels(best[0]);
+  }, [Object.keys(labellers).join()]);
 
   return html`<div>
     <div class="note">Tunes the judge's rubric against labelled turns: it finds where the judge disagrees with the labels, asks an optimiser model to rewrite the
       definitions, keeps a rewrite only if it agrees better, then checks the result on turns it never saw. Approach follows reflective prompt optimisers (GEPA, MIPRO).</div>
     <div class="row" style=${{ margin: "12px 0" }}>
-      <span>Labels: <select value=${labels} onChange=${(e) => setLabels(e.target.value)}>${Object.entries(labellers).map(([n, l]) => html`<option key=${n} value=${n}>${n} (${l.kind}, ${l.count})</option>`)}</select>
+      <span>Tune on: <select value=${labels} onChange=${(e) => setLabels(e.target.value)}>${Object.entries(labellers).map(([n, l]) => html`<option key=${n} value=${n}>${n} · ${KIND[l.kind] || l.kind} · ${l.count} turns</option>`)}</select>
         Rounds: <input type="number" min="1" max="8" value=${rounds} style=${{ width: "56px" }} onChange=${(e) => setRounds(e.target.value)}/></span>
       <span><button disabled=${data.running} onClick=${start}>${data.running ? "running…" : "Start tuning"}</button> <span class="muted">${err}</span></span>
     </div>
     ${!run ? html`<span class="muted">No tuning runs yet.</span>` : html`<div class="panel">
-      <div class="row"><strong>${run.id}</strong><span class=${"badge " + (run.status === "done" ? "ok" : run.status === "failed" ? "warn" : "")}>${run.status}</span></div>
-      <div class="muted">judge ${run.config.judge} · optimiser ${run.config.optimiser} · labels ${run.config.labels} (${run.config.labeller_kind}) · train ${run.config.n_train} / held-out ${run.config.n_heldout}</div>
-      ${run.config.labeller_kind === "llm" ? html`<div class="note" style=${{ margin: "8px 0" }}>These labels were written by a model, so tuning makes the judge resemble that model, not a human. Treat the result as a demonstration of the method.</div>` : null}
+      <div class="row"><span>Run <select value=${run.id} onChange=${(e) => setPicked(e.target.value)}>${data.runs.map((r) => html`<option key=${r.id} value=${r.id}>${r.id} · ${r.status}</option>`)}</select></span>
+        <span class=${"badge " + (run.status === "done" ? "ok" : run.status === "failed" ? "warn" : "")}>${run.status}</span></div>
+      <div class="muted" style=${{ marginTop: "6px" }}>judge ${run.config.judge} · optimiser ${run.config.optimiser} · train ${run.config.n_train} / held-out ${run.config.n_heldout}</div>
+      <div class="muted">labels: ${String(run.config.labels).split("/").pop()} <span class="badge" title="Who produced the labels this run was tuned on">${KIND[run.config.labeller_kind] || run.config.labeller_kind}</span></div>
       ${run.error ? html`<div class="note">${run.error}</div>` : null}
       <table style=${{ marginTop: "8px" }}><thead><tr><th>round</th><th>train (MAE · mean κ)</th><th>result</th></tr></thead><tbody>
         ${run.history.map((h) => html`<tr key=${h.round}><td>${h.round === 0 ? "baseline" : h.round}</td><td><${Metric} m=${h.train}/></td><td>${h.accepted ? "kept" : "rejected"} · ${h.note}</td></tr>`)}</tbody></table>
@@ -312,8 +321,6 @@ function TuneView() {
         return html`<details key=${d} open=${ch}><summary>${d}${ch ? " (changed)" : ""}</summary>
           ${ch ? html`<div class="def muted">was: ${was}</div>` : null}<div class=${"def" + (ch ? " changed" : "")}>${now}</div></details>`; })}
     </div>`}
-    ${data.runs.length > 1 ? html`<h2>Earlier runs</h2><table><tbody>${data.runs.slice(1).map((r) => html`<tr key=${r.id}><td>${r.id}</td><td>${r.status}</td>
-      <td>${r.heldout ? html`held-out <${Metric} m=${r.heldout.baseline}/> → <${Metric} m=${r.heldout.best}/>` : ""}</td></tr>`)}</tbody></table>` : null}
   </div>`;
 }
 
