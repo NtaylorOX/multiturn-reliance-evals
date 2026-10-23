@@ -3,7 +3,7 @@ import json
 import pandas as pd
 
 from observability.export import JsonlSpanExporter, load_spans
-from observability.plots import plot_by_model, plot_by_pressure, summary_table
+from observability.plots import plot_by_model, plot_by_pressure, plot_headline, summary_table
 from observability.tracing import DIMENSIONS, Telemetry
 
 
@@ -36,6 +36,7 @@ def test_plots_build_and_summary_reports_drift():
     df = _df()
     assert plot_by_model(df, "none").axes
     assert plot_by_pressure(df, "a").axes
+    assert plot_headline(df).axes
     t = summary_table(df)
     assert (t.late_minus_early > 0).all()
     assert set(t.conversations) == {3}

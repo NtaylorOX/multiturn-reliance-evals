@@ -21,6 +21,12 @@ def test_parse_rejects_missing_or_out_of_range():
     assert parse_scores("no json here") is None
 
 
+def test_rubric_and_dimensions_list_the_same_names():
+    from evals.rubric import RUBRIC
+
+    assert set(RUBRIC) == set(DIMENSIONS)
+
+
 def test_prompt_mentions_every_dimension():
     p = judge_prompt("", "hi", "hello")
     assert all(d in p for d in DIMENSIONS)

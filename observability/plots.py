@@ -15,35 +15,21 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from evals.models import MODELS
+from evals.logs import iter_turn_records
 from observability.tracing import DIMENSIONS
 
 # Okabe-Ito: distinguishable for common colour-vision deficiencies.
 PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
 PERSONA_ORDER = ["lonely", "distressed", "dependent", "control"]
 PRESSURE_ORDER = ["none", "exclusivity", "availability", "discourage_support"]
-_SHORT = {v: k for k, v in MODELS.items()}
 
 
 def turns_from_logs(log_dir: str | Path) -> pd.DataFrame:
-    """One row per judged turn across every successful .eval log under `log_dir`."""
-    from inspect_ai.log import read_eval_log
-
-    rows = []
-    for path in sorted(Path(log_dir).rglob("*.eval")):
-        log = read_eval_log(str(path))
-        if log.status != "success" or not log.samples:
-            continue
-        model = _SHORT.get(log.eval.model, log.eval.model)
-        for s in log.samples:
-            for r in s.metadata.get("turns", []):
-                if not r["scores"]:
-                    continue
-                rows.append({
-                    "model": model, "persona": s.metadata["persona"], "pressure": s.metadata["pressure"],
-                    "sample": str(s.id), "turn": r["turn"] + 1,
-                    "score": sum(r["scores"].values()) / len(DIMENSIONS), **r["scores"],
-                })
+    """One row per judged turn: model, persona, pressure, sample, 1-based turn, mean `score` and each dimension."""
+    rows = [{
+        "model": r["model"], "persona": r["persona"], "pressure": r["pressure"], "sample": r["sample"],
+        "turn": r["turn"] + 1, "score": sum(r["scores"].values()) / len(DIMENSIONS), **r["scores"],
+    } for r in iter_turn_records(log_dir) if r["scores"]]
     return pd.DataFrame(rows)
 
 
@@ -95,6 +81,38 @@ def plot_by_pressure(df: pd.DataFrame, model: str) -> plt.Figure:
     return _grid(df[df.model == model], "pressure", f"Effect of pressure on {model}", PRESSURE_ORDER)
 
 
+def plot_headline(df: pd.DataFrame) -> plt.Figure:
+    """Mean reliance per pressure condition, one bar per model, with each conversation as a dot.
+
+    Pools the personas, so it answers "does pressure change what models do?" in one picture. The dots show
+    the spread across conversations, which is the honest measure of how much one run can be trusted.
+    """
+    per_conv = df.groupby(["model", "pressure", "persona", "sample"]).score.mean().reset_index()
+    pressures = [p for p in PRESSURE_ORDER if p in set(per_conv.pressure)]
+    models = sorted(set(per_conv.model))
+    width = 0.8 / len(models)
+    fig, ax = plt.subplots(figsize=(8.5, 4.2))
+    for i, model in enumerate(models):
+        xs, means, errs = [], [], []
+        for j, pressure in enumerate(pressures):
+            vals = per_conv[(per_conv.model == model) & (per_conv.pressure == pressure)].score
+            x = j + (i - (len(models) - 1) / 2) * width
+            xs.append(x)
+            means.append(vals.mean())
+            errs.append(1.96 * vals.sem() if len(vals) > 1 else 0)
+            ax.scatter([x] * len(vals), vals, s=14, color="black", alpha=0.35, zorder=3)
+        ax.bar(xs, means, width * 0.9, yerr=errs, color=PALETTE[i % len(PALETTE)], label=model, capsize=3, zorder=2)
+    ax.set_xticks(range(len(pressures)), pressures)
+    ax.set_ylabel("mean reliance score (0 to 1)")
+    ax.set_ylim(0, 1)
+    ax.set_title("Reliance by pressure condition (dots: individual conversations; bars: mean, 95% CI)")
+    ax.grid(axis="y", alpha=0.25, zorder=0)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    return fig
+
+
 def summary_table(df: pd.DataFrame) -> pd.DataFrame:
     """Mean reliance per model x persona x pressure, with first-half vs second-half turns."""
     half = df.turn.max() // 2
@@ -122,7 +140,7 @@ def build_report(log_dir: str | Path, out_dir: str | Path) -> Path:
     table = summary_table(df)
     table.to_csv(out / "summary.csv", index=False)
 
-    figs: list[tuple[str, plt.Figure]] = []
+    figs: list[tuple[str, plt.Figure]] = [("headline_by_pressure", plot_headline(df))]
     for pressure in PRESSURE_ORDER:
         if pressure in set(df.pressure):
             figs.append((f"by_model_{pressure}", plot_by_model(df, pressure)))
