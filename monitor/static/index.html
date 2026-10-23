@@ -42,7 +42,16 @@
   tr.click { cursor:pointer; } tr.click:hover { background:var(--lo); }
   .drawer { position:fixed; top:0; right:0; bottom:0; width:min(560px, 100%); background:var(--panel); border-left:1px solid var(--line);
             overflow:auto; padding:16px; box-shadow:-8px 0 24px rgba(0,0,0,.12); }
-  .msg { margin:10px 0; padding:8px 10px; border-radius:8px; white-space:pre-wrap; }
+  .msg { margin:10px 0; padding:8px 10px; border-radius:8px; overflow-wrap:anywhere; }
+  .md > :first-child { margin-top:0; } .md > :last-child { margin-bottom:0; }
+  .md p { margin:.5em 0; } .md h1, .md h2, .md h3, .md h4 { font-size:1em; margin:.9em 0 .3em; text-transform:none; letter-spacing:0; color:var(--ink); }
+  .md h1 { font-size:1.1em; } .md h2 { font-size:1.05em; }
+  .md ul, .md ol { margin:.4em 0; padding-left:1.4em; } .md li { margin:.15em 0; }
+  .md blockquote { margin:.6em 0; padding:.1em .8em; border-left:3px solid var(--line); color:var(--muted); }
+  .md hr { border:0; border-top:1px solid var(--line); margin:.8em 0; }
+  .md code { background:var(--lo); padding:0 .3em; border-radius:4px; font-size:.92em; }
+  .md pre { background:var(--lo); padding:8px; border-radius:6px; overflow:auto; } .md pre code { background:none; padding:0; }
+  .md table { font-size:12.5px; } .md a { color:var(--accent); }
   .msg.user { background:var(--lo); } .msg.assistant { border:1px solid var(--line); }
   .who { font-size:11px; color:var(--muted); margin-bottom:2px; display:flex; justify-content:space-between; }
   nav { display:flex; gap:4px; margin-left:12px; }
@@ -68,6 +77,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 <script>
 const { useReducer, useEffect, useState } = React;
 const html = htm.bind(React.createElement);
@@ -92,6 +103,21 @@ function reduce(state, ev) {
     case "conversation_end": if (c) { Object.assign(c, { status: "done", mean: ev.mean, unjudged: ev.unjudged, last: ev.ts }); convs[ev.conv] = c; } break;
   }
   return { convs, events: state.events + 1, lastTs: ev.ts || state.lastTs };
+}
+
+// Model output is untrusted, so it is parsed as markdown and then sanitised before it is put in the page:
+// scripts, event handlers and images are stripped, and links open in a new tab without a referrer.
+function renderMarkdown(text) {
+  if (!window.marked || !window.DOMPurify) return null;   // libraries blocked: the caller shows plain text
+  const raw = window.marked.parse(String(text || ""), { gfm: true, breaks: true });
+  return window.DOMPurify.sanitize(raw, { FORBID_TAGS: ["style", "img", "iframe", "form"], FORBID_ATTR: ["style"] })
+    .replace(/<a /g, '<a target="_blank" rel="noopener noreferrer" ');
+}
+
+function Md({ text }) {
+  const rendered = React.useMemo(() => renderMarkdown(text), [text]);
+  if (rendered == null) return html`<div style=${{ whiteSpace: "pre-wrap" }}>${text}</div>`;
+  return html`<div class="md" dangerouslySetInnerHTML=${{ __html: rendered }}/>`;
 }
 
 function Spark({ c }) {
@@ -124,7 +150,7 @@ function Drawer({ c, onClose }) {
       return html`<div key=${t}>${ms.map((m, i) => html`<div class=${"msg " + m.role} key=${i}>
         <div class="who"><span>${m.role} · turn ${t + 1}</span>
         ${m.role === "assistant" && s != null ? html`<span class="tag" style=${{ background: scoreColor(s) }}
-           title=${d ? Object.entries(d).map(([k, v]) => k + ": " + v).join("\n") : ""}>reliance ${s.toFixed(2)}</span>` : null}</div>${m.text}</div>`)}</div>`;
+           title=${d ? Object.entries(d).map(([k, v]) => k + ": " + v).join("\n") : ""}>reliance ${s.toFixed(2)}</span>` : null}</div><${Md} text=${m.text}/></div>`)}</div>`;
     })}
   </div>`;
 }
@@ -191,6 +217,11 @@ function LabelView() {
     if (!r.ok) { setSaveMsg("NOT started: " + ((await r.json()).detail || r.status)); return; }
     setPlaced(false); await Promise.all([reload(), fetch("/api/validation").then((x) => x.json()).then(setOv)]);
   };
+  const reviewAsMe = async () => {
+    const r = await post("/api/validation/review/me", { source: name });
+    if (!r.ok && r.status !== 409) { setSaveMsg("NOT started: " + ((await r.json()).detail || r.status)); return; }
+    setName("me");   // 409 means "me" already has a file: just switch to it
+  };
   const showAgreement = () => fetch("/api/agreement?labels=" + encodeURIComponent(name)).then((r) => r.json()).then((d) => setAgree(d.rows));
   const kindText = kind === "llm" ? "labels by a model (read-only)" : reviewing ? "human review of " + (rev.source || "model") + "'s draft" : "human";
 
@@ -200,6 +231,8 @@ function LabelView() {
         <span class=${"badge " + (kind === "llm" ? "warn" : "ok")}>${kindText}</span></span>
       <span class="muted">${done}/${ov.turns.length} ${reviewing ? "confirmed" : "fully labelled"}${reviewing ? " · " + rev.changed.length + " changed" : ""} · <span class=${saveMsg.startsWith("NOT") ? "badge warn" : ""}>${saveMsg}</span></span>
     </div>
+    ${kind === "llm" ? html`<div class="note" style=${{ marginBottom: "10px" }}>You are viewing <b>${name}</b>, a model's labels, which are read-only. To review them, type your own name in the Labeller box
+      (this browser remembers the last name used) or <button onClick=${reviewAsMe}>start reviewing them as "me"</button></div>` : null}
     ${canStartReview ? html`<div class="note" style=${{ marginBottom: "10px" }}>Short on time? Instead of labelling from scratch, review ${llmName}'s labels: they are loaded as a draft, you read every turn,
       change any score you disagree with and confirm it. Only confirmed turns count, and the file is recorded as a human review of a model draft.
       <div style=${{ marginTop: "6px" }}><button onClick=${startReview}>Start reviewing ${llmName}'s labels as ${name}</button></div></div>` : null}
@@ -209,9 +242,9 @@ function LabelView() {
     <div class="grid2" style=${{ marginTop: "12px" }}>
       <div class="panel">
         <div class="row"><strong>Turn ${turn.turn_id} of ${ov.turns.length}</strong><span class="tag">${turn.persona}</span></div>
-        ${turn.context ? html`<details><summary>earlier exchange</summary><div class="def">${turn.context}</div></details>` : null}
-        <div class="msg user"><div class="who">user</div>${turn.user}</div>
-        <div class="msg assistant"><div class="who">assistant (label this)</div>${turn.assistant}</div>
+        ${turn.context ? html`<details><summary>earlier exchange</summary><${Md} text=${turn.context}/></details>` : null}
+        <div class="msg user"><div class="who">user</div><${Md} text=${turn.user}/></div>
+        <div class="msg assistant"><div class="who">assistant (label this)</div><${Md} text=${turn.assistant}/></div>
         <div class="row"><button disabled=${i === 0} onClick=${() => setI(i - 1)}>previous</button>
           <button disabled=${i === ov.turns.length - 1} onClick=${() => setI(i + 1)}>next</button></div>
       </div>

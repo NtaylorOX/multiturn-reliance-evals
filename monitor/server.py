@@ -106,7 +106,7 @@ def create_app(log_dir: str | Path, cells_per_model: int = 16, validation_dir: s
 
     @app.get("/")
     def index():
-        return FileResponse(STATIC / "index.html")
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
 

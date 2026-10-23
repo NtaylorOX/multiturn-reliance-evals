@@ -95,7 +95,8 @@ uv run python -m observability.plots logs/my-run --out report
 
 `uv run python -m monitor.server logs/my-run` serves a local page (a small FastAPI server and one React file, no build
 step) with three tabs. **Run** shows progress per model and each conversation as it happens, with a transcript view
-that shows the judge's score on every assistant turn. **Label** is a form for scoring turns without seeing the judge.
+that shows the judge's score on every assistant turn. Message text is rendered as markdown, sanitised first because it
+is model output. **Label** is a form for scoring turns without seeing the judge.
 **Tune judge** runs and displays rubric tuning. It only listens on localhost.
 
 ![Run tab: a finished conversation with per-turn reliance scores](docs/img/monitor-transcript.jpg)
