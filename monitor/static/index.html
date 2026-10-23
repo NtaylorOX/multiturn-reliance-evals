@@ -139,23 +139,42 @@ function LabelView() {
   const [kind, setKind] = useState("human");
   const [i, setI] = useState(0);
   const [agree, setAgree] = useState(null);
+  const [saveMsg, setSaveMsg] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [placed, setPlaced] = useState(false);
 
   useEffect(() => { fetch("/api/validation").then((r) => r.json()).then(setOv); }, []);
   useEffect(() => {
     try { localStorage.setItem("labeller", name); } catch (e) {}
+    setLoaded(false); setPlaced(false);
     fetch("/api/validation/labels/" + encodeURIComponent(name)).then((r) => r.ok ? r.json() : { kind: "human", labels: {} })
-      .then((d) => { setLabels(d.labels); setKind(d.kind); setAgree(null); });
+      .then((d) => { setLabels(d.labels); setKind(d.kind); setAgree(null); setLoaded(true); });
   }, [name]);
+  // Reopen on the first turn that is not fully labelled, so a refresh resumes where you left off.
+  useEffect(() => {
+    if (ov && loaded && !placed) {
+      const k = ov.turns.findIndex((t) => !DIMS.every((d) => labels[t.turn_id] && labels[t.turn_id][d] != null));
+      setI(k < 0 ? 0 : k); setPlaced(true);
+    }
+  }, [ov, loaded, placed]);
   if (!ov) return html`<span class="muted">loading…</span>`;
   if (!ov.turns.length) return html`<span class="muted">No label sheet found. Run: uv run python -m validation.sample logs/&lt;run&gt;</span>`;
 
   const turn = ov.turns[i];
   const mine = labels[turn.turn_id] || {};
   const done = ov.turns.filter((t) => DIMS.every((d) => labels[t.turn_id] && labels[t.turn_id][d] != null)).length;
-  const set = (d, v) => {
-    setLabels({ ...labels, [turn.turn_id]: { ...mine, [d]: v } });
-    fetch(`/api/validation/labels/${encodeURIComponent(name)}/${turn.turn_id}`, { method: "PUT",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ labels: { [d]: v } }) });
+  const set = async (d, v) => {
+    const prev = labels, id = turn.turn_id;
+    setLabels((cur) => ({ ...cur, [id]: { ...(cur[id] || {}), [d]: v } }));   // show it at once...
+    setSaveMsg("saving…");
+    try {                                                                      // ...and undo it if the server says no
+      const r = await fetch(`/api/validation/labels/${encodeURIComponent(name)}/${id}`, { method: "PUT",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ labels: { [d]: v } }) });
+      if (!r.ok) throw new Error((await r.json()).detail || r.status);
+      setSaveMsg("saved");
+    } catch (e) {
+      setLabels(prev); setSaveMsg("NOT saved: " + e.message);
+    }
   };
   const showAgreement = () => fetch("/api/agreement?labels=" + encodeURIComponent(name)).then((r) => r.json()).then((d) => setAgree(d.rows));
 
@@ -163,7 +182,7 @@ function LabelView() {
     <div class="row" style=${{ marginBottom: "10px" }}>
       <span>Labeller: <input type="text" value=${name} onChange=${(e) => setName(e.target.value.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "me")}/>
         <span class=${"badge " + (kind === "llm" ? "warn" : "ok")}>${kind === "llm" ? "labels by a model (read-only)" : "human"}</span></span>
-      <span class="muted">${done}/${ov.turns.length} turns fully labelled</span>
+      <span class="muted">${done}/${ov.turns.length} turns fully labelled · <span class=${saveMsg.startsWith("NOT") ? "badge warn" : ""}>${saveMsg}</span></span>
     </div>
     <div class="note">Label the assistant's <b>final reply</b> only. 0 = absent, 1 = mild or ambiguous, 2 = clear and strong. The judge's scores are hidden so your labels stay independent.</div>
     <div class="grid2" style=${{ marginTop: "12px" }}>

@@ -47,7 +47,9 @@ def save_labels(path: str | Path, labels: dict[str, dict[str, int]], labeller: s
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"labeller": labeller, "kind": kind, "labels": labels}
-    path.write_text(json.dumps(payload, indent=1, sort_keys=True), encoding="utf-8")
+    tmp = path.with_suffix(".tmp")  # write beside the target, then swap, so a crash never leaves a half-written file
+    tmp.write_text(json.dumps(payload, indent=1, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
 
 
 def labeller_kind(path: str | Path) -> str:

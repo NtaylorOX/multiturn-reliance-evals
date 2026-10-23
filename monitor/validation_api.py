@@ -14,6 +14,8 @@ import json
 import re
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -51,6 +53,7 @@ def build_router(validation_dir: str | Path) -> APIRouter:
     root = Path(validation_dir)
     router = APIRouter()
     state: dict = {"proc": None}
+    lock = threading.Lock()
 
     def labels_path(name: str) -> Path:
         return root / "labels" / f"{_check_name(name)}.json"
@@ -64,7 +67,7 @@ def build_router(validation_dir: str | Path) -> APIRouter:
                 turns = [{"turn_id": r["turn_id"], "persona": r["persona"], "context": r["context"],
                           "user": r["user_message"], "assistant": r["assistant_reply"]} for r in csv.DictReader(f)]
         labellers = {}
-        for p in sorted((root / "labels").glob("*.json")):
+        for p in sorted((root / "labels").glob("*.json")):  # `*.log.jsonl` audit files do not match this pattern
             raw = json.loads(p.read_text(encoding="utf-8"))
             labellers[p.stem] = {"kind": raw.get("kind", "human"), "count": len(load_labels(p))}
         return {"turns": turns, "labellers": labellers, "dimensions": list(DIMENSIONS), "rubric": RUBRIC}
@@ -77,16 +80,33 @@ def build_router(validation_dir: str | Path) -> APIRouter:
         raw = json.loads(p.read_text(encoding="utf-8"))
         return {"kind": raw.get("kind", "human"), "labels": raw["labels"]}
 
+    def sheet_turn_ids() -> set[str]:
+        sheet = root / "label_sheet.csv"
+        if not sheet.exists():
+            return set()
+        with sheet.open(newline="", encoding="utf-8") as f:
+            return {r["turn_id"] for r in csv.DictReader(f)}
+
     @router.put("/api/validation/labels/{name}/{turn_id}")
     def put_label(name: str, turn_id: str, body: LabelBody):
+        """Set some of a turn's labels. A later value for the same dimension replaces the earlier one.
+
+        Every change is checked, applied under a lock (so quick successive clicks cannot overwrite each other),
+        written atomically, and appended to `<name>.log.jsonl` as an audit trail.
+        """
         p = labels_path(name)
-        existing = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"kind": "human", "labels": {}}
-        if existing.get("kind") == "llm":
-            raise HTTPException(403, "that label file was written by a model and is read-only here")
-        if set(body.labels) - set(DIMENSIONS) or any(v not in (0, 1, 2) for v in body.labels.values()):
+        if turn_id not in sheet_turn_ids():
+            raise HTTPException(404, "no such turn in the label sheet")
+        if not body.labels or set(body.labels) - set(DIMENSIONS) or any(v not in (0, 1, 2) for v in body.labels.values()):
             raise HTTPException(400, "labels must use the five rubric dimensions with values 0, 1 or 2")
-        existing["labels"].setdefault(turn_id, {}).update(body.labels)
-        save_labels(p, existing["labels"], labeller=name, kind="human")
+        with lock:
+            existing = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"kind": "human", "labels": {}}
+            if existing.get("kind") == "llm":
+                raise HTTPException(403, "that label file was written by a model and is read-only here")
+            existing["labels"].setdefault(turn_id, {}).update(body.labels)
+            save_labels(p, existing["labels"], labeller=name, kind="human")
+            with p.with_suffix(".log.jsonl").open("a", encoding="utf-8") as log:
+                log.write(json.dumps({"ts": time.time(), "turn": turn_id, "set": body.labels}) + "\n")
         return {"ok": True}
 
     @router.get("/api/agreement")
