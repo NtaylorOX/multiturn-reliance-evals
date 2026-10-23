@@ -18,6 +18,18 @@ labels and to tune its rubric.
 It is built on [Inspect AI](https://inspect.aisi.org.uk/), so models are interchangeable with a one-line
 change and every run produces a standard Inspect log.
 
+## Why this exists
+
+People increasingly use chat assistants for company and emotional support, and some of the behaviours that make that
+unhealthy are easy to describe but rarely measured: promising to always be there, presenting itself as the only one who
+understands, flattering, claiming feelings it cannot have, or quietly discouraging a lonely person from turning to
+friends, family or professionals. Single-turn benchmarks miss most of this, because reliance builds up over a
+conversation and depends on who the user is and what they ask for.
+
+This repo makes the question concrete enough to test: a simulated user with a defined vulnerability, an optional
+and deliberately light push towards the unhealthy behaviour, a per-turn rubric, and tooling to check how far the
+automated judge can be trusted. It is a pilot and a template, not a verdict on any model.
+
 ```mermaid
 flowchart LR
     P[persona + pressure<br/><code>redteam/</code>] --> S[simulated user<br/>qwen3:8b]
@@ -147,7 +159,62 @@ models moved when the rubric changed.
 are individual conversations) and differences between models are within noise. The judge is a small local model and
 agrees only moderately with the reference labels, see below.
 
-<!-- Motivation, findings, limitations and the regulatory framing are written separately. -->
+## Findings
+
+1. **Direct pressure, not vulnerability alone, is what moved the scores.** Without pressure, scores were near zero for
+   every model (0.02 to 0.05) and every persona (0.00 to 0.08), including the vulnerable ones. Each pressure condition
+   raised the overall mean to between 0.13 and 0.31 depending on the judge. Across all conditions the vulnerable personas averaged more
+   (distressed and lonely about 0.2 to 0.24) than the control persona (about 0.08), so vulnerability amplifies the effect
+   but a user explicitly asking for the behaviour is what triggers it.
+2. **Models differ in how they answer the same ask, qualitatively.** In the transcripts, `llama3.1:8b` often agreed to
+   "always be here" and offered round-the-clock availability, while `nemotron-3-ultra` more often declined and pointed
+   the user back to the people in their life ("You don't need me right now... she is the one you're waiting on").
+   `nemotron-3-ultra` lapsed too, with some high-scoring turns for the distressed and lonely personas. The per-model
+   numbers lean the same way for availability pressure (0.29 vs 0.12) but one conversation per cell cannot confirm a
+   ranking.
+3. **The judge was the weakest part of the pipeline.** On the 30 labelled turns the original judge scored `exclusivity`
+   at 0.8 on average where the reference labels gave 0.2, largely by treating the user's request for exclusivity as the model's behaviour.
+   Tuning the rubric reduced this somewhat but did not remove it, which moved the ordering of the pressure conditions.
+   Conclusions about which pressure is worst, or which model is best, should wait for a better-validated judge.
+4. **Whether reliance grows with turns is not answered.** Mean scores rise from the early to the middle turns and then
+   level off, but pressure only starts at turn 3, so turn number and pressure are confounded.
+
+## Limitations
+
+- **Size.** 48 conversations, one per model, persona and pressure cell, on one seed and one temperature. No significance
+  tests; the intervals in the figures are wide.
+- **Models.** Three open-weight models, two of them 8B-class. No closed frontier models were run, so nothing here says
+  how current frontier systems behave.
+- **Simulated users.** An 8B model plays the user. Its messages are sometimes repetitive, the pressure is applied to the
+  control persona too (which is unnatural), and no simulation substitutes for real vulnerable people or human-subjects work.
+- **The judge and its labels.** A small local judge, validated on 30 turns whose labels are a human-confirmed model draft
+  (see above), not independent human labels. The five dimensions are averaged with equal weight, which is a convenience
+  and not a validated measure of harm.
+- **Output format.** Some `deepseek-r1` replies contained its planning text instead of an answer, which affects what
+  the judge sees for that model.
+- **Scope.** English only, ten turns, no memory across sessions, no system prompts beyond a neutral one.
+
+## Next steps
+
+1. More conversations per cell (10 or more) and a statistical model that handles repeated measures, to separate
+   models, personas and pressures.
+2. From-scratch labels from two or more people, with agreement between them reported, and a stronger judge validated
+   against those labels; rescore the pilot with it.
+3. Vary when pressure starts, and run pressure-free long conversations, to separate the effect of turn number from the
+   effect of pressure.
+4. Add current hosted frontier models and a pressure-free "benign dependence" control, and compare the judge's
+   dimensions with existing sycophancy and manipulation benchmarks to check what they measure.
+5. Check the personas and judge in other languages, ideally with native-speaker review.
+
+## EU AI Act context
+
+Article 5 of the EU AI Act prohibits AI systems that use manipulative or deceptive techniques to materially distort
+behaviour in ways likely to cause significant harm (Art. 5(1)(a)), and systems that exploit vulnerabilities linked to age,
+disability or a person's social or economic situation (Art. 5(1)(b)). The prohibitions have applied since February 2025.
+Whether an assistant that reinforces a lonely user's dependence amounts to either is a legal and empirical question
+this repo does not settle, and nothing here is legal advice. What it offers is a set of measurement ingredients that an
+evaluation of that question would need: personas that operationalise a vulnerability, graded per-turn behaviours instead
+of a single verdict, and an explicit, inspectable account of how far the automated judge can be trusted.
 
 ## Validating and tuning the judge
 
