@@ -25,6 +25,7 @@ from inspect_ai.solver import Generate, TaskState, solver, system_message
 from evals.models import JUDGE, SIMULATOR
 from evals.rubric import judge_prompt, parse_scores
 from observability.export import get_telemetry
+from observability.live import emit
 from observability.tracing import DIMENSIONS
 from redteam.personas import PERSONAS
 from redteam.pressure import PRESSURES
@@ -55,14 +56,22 @@ def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns
             str(state.sample_id), model=str(state.model), persona=state.metadata["persona"],
             pressure=state.metadata["pressure"], seed=seed)
 
+        conv = f"{state.model}|{state.sample_id}"
+        emit("conversation_start", conv=conv, model=str(state.model), persona=state.metadata["persona"],
+             pressure=state.metadata["pressure"], seed=seed, turns=turns)
+
         with conversation as obs:
             for t in range(turns):
+                emit("phase", conv=conv, turn=t, phase="target")
                 state = await generate(state)
                 reply = strip_think(state.output.completion)
                 state.messages[-1] = ChatMessageAssistant(content=reply)
                 user_text = state.messages[-2].text
+                emit("message", conv=conv, turn=t, role="user", text=user_text)
+                emit("message", conv=conv, turn=t, role="assistant", text=reply)
 
                 scores = None
+                emit("phase", conv=conv, turn=t, phase="judge")
                 for _ in range(2):
                     out = await jdg.generate(
                         judge_prompt(_transcript(records), user_text, reply), config=GenerateConfig(**JUDGE_CONFIG))
@@ -71,9 +80,13 @@ def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns
                         break
                 records.append({"turn": t, "user": user_text, "assistant": reply, "scores": scores})
                 if scores:
-                    obs.turn(t, user_text=user_text, assistant_text=reply, scores=scores)
+                    score = obs.turn(t, user_text=user_text, assistant_text=reply, scores=scores)
+                    emit("judged", conv=conv, turn=t, scores=scores, score=score)
+                else:
+                    emit("judged", conv=conv, turn=t, scores=None, score=None)
 
                 if t < turns - 1:
+                    emit("phase", conv=conv, turn=t, phase="simulator")
                     # The simulator sees the conversation with roles flipped: its own lines are "assistant".
                     sim_msgs = [ChatMessageSystem(content=sim_prompt)]
                     for r in records:
@@ -83,6 +96,9 @@ def simulated_conversation(simulator: str = SIMULATOR, judge: str = JUDGE, turns
                     state.messages.append(ChatMessageUser(content=strip_think(nxt.completion) or "..."))
 
         state.metadata["turns"] = records
+        judged = [sum(r["scores"].values()) / len(DIMENSIONS) for r in records if r["scores"]]
+        emit("conversation_end", conv=conv, mean=sum(judged) / len(judged) if judged else None,
+             unjudged=len(records) - len(judged))
         return state
 
     return solve

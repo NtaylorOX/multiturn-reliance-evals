@@ -2391,6 +2391,7 @@ name = "multiturn-reliance-evals"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "inspect-ai" },
     { name = "matplotlib" },
@@ -2400,6 +2401,7 @@ dependencies = [
     { name = "opentelemetry-sdk" },
     { name = "pandas" },
     { name = "scikit-learn" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -2412,6 +2414,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = ">=0.159.1" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "inspect-ai", specifier = ">=0.3" },
     { name = "matplotlib", specifier = ">=3.9" },
@@ -2421,6 +2424,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.30" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "scikit-learn", specifier = ">=1.5" },
+    { name = "uvicorn", specifier = ">=0.54.0" },
 ]
 
 [package.metadata.requires-dev]
