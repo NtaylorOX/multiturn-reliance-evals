@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+.env
+# Inspect logs and run outputs contain full conversations; publish curated results only
+logs/
+runs/
+*.eval
